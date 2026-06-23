@@ -13,13 +13,14 @@ const wss    = new WebSocketServer({ server });
 // ── In-Memory-Räume ───────────────────────────────────────────────────────────
 const rooms = new Map();
 
-const INACTIVITY_MS = 30 * 60 * 1000;
+const INACTIVITY_MS = 2 * 60 * 60 * 1000; // 2 Stunden
 const MAX_CLIENTS   = 2;
 const MAX_MSG_LEN   = 6000;
 
 function createRoom(id) {
+  const createdAt = Date.now();
   const timer = setTimeout(() => deleteRoom(id, 'inactivity'), INACTIVITY_MS);
-  rooms.set(id, { clients: new Set(), timer });
+  rooms.set(id, { clients: new Set(), timer, createdAt });
 }
 
 function deleteRoom(id, reason) {
@@ -49,10 +50,10 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'interest-cohort=()');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' https://cdnjs.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     "connect-src 'self' ws: wss:",
-    "img-src 'none'",
+    "img-src 'self' data:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'none'",
@@ -61,16 +62,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Statische Dateien — alle im selben Ordner ─────────────────────────────────
-app.use(express.static(__dirname, {
-  etag: false,
-  // server.js selbst NICHT ausliefern
-  setHeaders: (res, filePath) => {
-    if (path.basename(filePath) === 'server.js') {
-      res.status(403).end();
-    }
-  }
-}));
+// ── Statische Dateien ─────────────────────────────────────────────────────────
+app.use(express.static(__dirname, { etag: false }));
 
 // ── REST: Raum erstellen ──────────────────────────────────────────────────────
 app.post('/api/room', (req, res) => {
@@ -79,12 +72,19 @@ app.post('/api/room', (req, res) => {
   res.json({ roomId: id });
 });
 
-// ── Fallback: SPA-Route /r/:id ────────────────────────────────────────────────
+// ── REST: Raum-Info (createdAt für Countdown) ─────────────────────────────────
+app.get('/api/room/:id', (req, res) => {
+  const room = rooms.get(req.params.id);
+  if (!room) return res.status(404).json({ error: 'not_found' });
+  res.json({ createdAt: room.createdAt });
+});
+
+// ── SPA-Fallback /r/:id ───────────────────────────────────────────────────────
 app.get('/r/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ── WebSocket-Handler ─────────────────────────────────────────────────────────
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
   const match = req.url.match(/^\/ws\/([a-f0-9]{32})$/);
   if (!match) { ws.close(4000, 'invalid_room'); return; }
@@ -92,8 +92,8 @@ wss.on('connection', (ws, req) => {
   const roomId = match[1];
   const room   = rooms.get(roomId);
 
-  if (!room)                        { ws.close(4001, 'room_not_found'); return; }
-  if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');  return; }
+  if (!room)                            { ws.close(4001, 'room_not_found'); return; }
+  if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');      return; }
 
   room.clients.add(ws);
   resetTimer(roomId);
@@ -109,8 +109,21 @@ wss.on('connection', (ws, req) => {
     resetTimer(roomId);
 
     if (msg.type === 'chat') {
-      if (typeof msg.payload !== 'string') return;
-      broadcastExcept(room, ws, { type: 'chat', payload: msg.payload });
+      if (typeof msg.payload !== 'string' || typeof msg.id !== 'string') return;
+      broadcastExcept(room, ws, { type: 'chat', payload: msg.payload, id: msg.id });
+
+    } else if (msg.type === 'read') {
+      // Gelesen-Bestätigung weiterleiten
+      broadcastExcept(room, ws, { type: 'read', id: msg.id });
+
+    } else if (msg.type === 'typing') {
+      broadcastExcept(room, ws, { type: 'typing', active: msg.active });
+
+    } else if (msg.type === 'retract') {
+      // Nachricht zurückziehen
+      if (typeof msg.id !== 'string') return;
+      broadcastExcept(room, ws, { type: 'retract', id: msg.id });
+
     } else if (msg.type === 'end') {
       deleteRoom(roomId, 'user_ended');
     }

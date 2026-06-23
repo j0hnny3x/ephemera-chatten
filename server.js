@@ -11,16 +11,29 @@ const server = http.createServer(app);
 const wss    = new WebSocketServer({ server });
 
 // ── In-Memory-Räume ───────────────────────────────────────────────────────────
+// Map<roomId, {
+//   clients:    Set<WebSocket>,
+//   timer:      Timeout,
+//   createdAt:  number,
+//   pwHash:     string|null,       // SHA-256 des Passworts (hex), oder null
+//   pending:    Array<{id,payload,ts}> // gepufferte Nachrichten bis Partner kommt
+// }>
 const rooms = new Map();
 
-const INACTIVITY_MS = 2 * 60 * 60 * 1000; // 2 Stunden
-const MAX_CLIENTS   = 2;
-const MAX_MSG_LEN   = 6000;
+const INACTIVITY_MS  = 2 * 60 * 60 * 1000; // 2 h
+const MAX_CLIENTS    = 2;
+const MAX_MSG_LEN    = 6000;
+const MAX_PENDING    = 50; // max. gepufferte Nachrichten
 
-function createRoom(id) {
-  const createdAt = Date.now();
+function createRoom(id, pwHash) {
   const timer = setTimeout(() => deleteRoom(id, 'inactivity'), INACTIVITY_MS);
-  rooms.set(id, { clients: new Set(), timer, createdAt });
+  rooms.set(id, {
+    clients:   new Set(),
+    timer,
+    createdAt: Date.now(),
+    pwHash:    pwHash || null,
+    pending:   [],
+  });
 }
 
 function deleteRoom(id, reason) {
@@ -64,22 +77,25 @@ app.use((req, res, next) => {
 
 // ── Statische Dateien ─────────────────────────────────────────────────────────
 app.use(express.static(__dirname, { etag: false }));
+app.use(express.json({ limit: '8kb' }));
 
 // ── REST: Raum erstellen ──────────────────────────────────────────────────────
 app.post('/api/room', (req, res) => {
-  const id = crypto.randomBytes(16).toString('hex');
-  createRoom(id);
-  res.json({ roomId: id });
+  const id     = crypto.randomBytes(16).toString('hex');
+  const pwHash = (typeof req.body?.pwHash === 'string' && req.body.pwHash.length === 64)
+    ? req.body.pwHash : null;
+  createRoom(id, pwHash);
+  res.json({ roomId: id, hasPassword: !!pwHash });
 });
 
-// ── REST: Raum-Info (createdAt für Countdown) ─────────────────────────────────
+// ── REST: Raum-Info ───────────────────────────────────────────────────────────
 app.get('/api/room/:id', (req, res) => {
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'not_found' });
-  res.json({ createdAt: room.createdAt });
+  res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash });
 });
 
-// ── SPA-Fallback /r/:id ───────────────────────────────────────────────────────
+// ── SPA-Fallback ──────────────────────────────────────────────────────────────
 app.get('/r/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -95,9 +111,34 @@ wss.on('connection', (ws, req) => {
   if (!room)                            { ws.close(4001, 'room_not_found'); return; }
   if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');      return; }
 
+  // Passwort-Prüfung: Server erwartet beim ersten Msg-Typ 'auth' den Hash
+  // Wenn kein Passwort gesetzt, direkt zulassen
+  let authenticated = !room.pwHash;
+  let authTimer = null;
+
+  if (room.pwHash) {
+    // 5 Sekunden Zeit für Auth, sonst Verbindung trennen
+    authTimer = setTimeout(() => {
+      ws.close(4003, 'auth_timeout');
+    }, 5000);
+  }
+
   room.clients.add(ws);
   resetTimer(roomId);
-  broadcast(room, { type: 'participant_count', count: room.clients.size });
+
+  // Allen mitteilen wie viele verbunden sind
+  broadcastCount(room);
+
+  // Gepufferte Nachrichten ausliefern wenn zweite Person kommt
+  if (room.clients.size === 2 && room.pending.length > 0 && authenticated) {
+    const toFlush = [...room.pending];
+    room.pending = [];
+    for (const p of toFlush) {
+      try {
+        ws.send(JSON.stringify({ type: 'chat', payload: p.payload, id: p.id, ts: p.ts, pending: true }));
+      } catch {}
+    }
+  }
 
   ws.on('message', (raw) => {
     if (raw.length > MAX_MSG_LEN) {
@@ -106,22 +147,64 @@ wss.on('connection', (ws, req) => {
     }
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+
+    // ── Passwort-Auth ──────────────────────────────────────────────
+    if (msg.type === 'auth') {
+      if (!room.pwHash) { authenticated = true; return; }
+      clearTimeout(authTimer);
+      if (typeof msg.pwHash === 'string' && msg.pwHash === room.pwHash) {
+        authenticated = true;
+        ws.send(JSON.stringify({ type: 'auth_ok' }));
+        // Jetzt ggf. pending ausliefern
+        if (room.clients.size === 2 && room.pending.length > 0) {
+          const toFlush = [...room.pending];
+          room.pending = [];
+          for (const p of toFlush) {
+            try {
+              ws.send(JSON.stringify({ type: 'chat', payload: p.payload, id: p.id, ts: p.ts, pending: true }));
+            } catch {}
+          }
+        }
+      } else {
+        ws.send(JSON.stringify({ type: 'auth_fail' }));
+        ws.close(4003, 'auth_failed');
+      }
+      return;
+    }
+
+    if (!authenticated) {
+      ws.send(JSON.stringify({ type: 'error', code: 'not_authenticated' }));
+      return;
+    }
+
     resetTimer(roomId);
 
     if (msg.type === 'chat') {
       if (typeof msg.payload !== 'string' || typeof msg.id !== 'string') return;
-      broadcastExcept(room, ws, { type: 'chat', payload: msg.payload, id: msg.id });
+      const ts = Date.now();
+
+      // Partner vorhanden → direkt weiterleiten
+      if (room.clients.size === 2) {
+        broadcastExcept(room, ws, { type: 'chat', payload: msg.payload, id: msg.id, ts });
+      } else {
+        // Puffern bis Partner kommt
+        if (room.pending.length < MAX_PENDING) {
+          room.pending.push({ payload: msg.payload, id: msg.id, ts });
+        }
+        // Absender informieren dass Nachricht gepuffert wurde
+        ws.send(JSON.stringify({ type: 'buffered', id: msg.id }));
+      }
 
     } else if (msg.type === 'read') {
-      // Gelesen-Bestätigung weiterleiten
       broadcastExcept(room, ws, { type: 'read', id: msg.id });
 
     } else if (msg.type === 'typing') {
       broadcastExcept(room, ws, { type: 'typing', active: msg.active });
 
     } else if (msg.type === 'retract') {
-      // Nachricht zurückziehen
       if (typeof msg.id !== 'string') return;
+      // Aus pending entfernen falls noch nicht zugestellt
+      room.pending = room.pending.filter(p => p.id !== msg.id);
       broadcastExcept(room, ws, { type: 'retract', id: msg.id });
 
     } else if (msg.type === 'end') {
@@ -130,17 +213,24 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    clearTimeout(authTimer);
     room.clients.delete(ws);
     const remaining = rooms.get(roomId);
     if (remaining) {
-      broadcast(remaining, { type: 'participant_count', count: remaining.clients.size });
+      broadcastCount(remaining);
       if (remaining.clients.size === 0) deleteRoom(roomId, 'all_left');
     }
   });
 
-  ws.on('error', () => { room.clients.delete(ws); });
+  ws.on('error', () => {
+    clearTimeout(authTimer);
+    room.clients.delete(ws);
+  });
 });
 
+function broadcastCount(room) {
+  broadcast(room, { type: 'participant_count', count: room.clients.size });
+}
 function broadcast(room, msg) {
   const data = JSON.stringify(msg);
   for (const c of room.clients) if (c.readyState === 1) c.send(data);

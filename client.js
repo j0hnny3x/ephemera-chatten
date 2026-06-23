@@ -3,7 +3,7 @@
 // ── Konstanten ────────────────────────────────────────────────────────────────
 const MAX_MSG_LEN   = 4000;
 const WS_PROTO      = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ROOM_LIFETIME = 2 * 60 * 60 * 1000; // 2 Stunden in ms
+const ROOM_LIFETIME = 2 * 60 * 60 * 1000;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let cryptoKey        = null;
@@ -12,11 +12,11 @@ let roomId           = null;
 let isCreator        = false;
 let partnerConnected = false;
 let countdownInterval= null;
-let roomCreatedAt    = null;
 let typingTimer      = null;
 let typingActive     = false;
+let pendingPwHash    = null;   // Hash für Auth-Msg nach WS-Connect
 
-// Eigene Nachrichten: id → { el, metaEl, readEl }
+// eigene Nachrichten: id → { el, readEl }
 const myMsgs = new Map();
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
@@ -24,6 +24,7 @@ const $ = id => document.getElementById(id);
 
 const screens = {
   home:   $('screen-home'),
+  pw:     $('screen-pw'),
   chat:   $('screen-chat'),
   closed: $('screen-closed'),
 };
@@ -54,64 +55,81 @@ async function encrypt(plaintext) {
   const enc = new TextEncoder().encode(plaintext);
   const ct  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, enc);
   const buf = new Uint8Array(12 + ct.byteLength);
-  buf.set(iv, 0);
-  buf.set(new Uint8Array(ct), 12);
+  buf.set(iv, 0); buf.set(new Uint8Array(ct), 12);
   return btoa(String.fromCharCode(...buf));
 }
 
 async function decrypt(b64) {
   const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const iv  = buf.slice(0, 12);
-  const ct  = buf.slice(12);
-  const pt  = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ct);
+  const iv = buf.slice(0, 12); const ct = buf.slice(12);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ct);
   return new TextDecoder().decode(pt);
 }
 
+// SHA-256 eines Passworts → hex (läuft im Browser, nie zum Server im Klartext)
+async function hashPassword(pw) {
+  const enc  = new TextEncoder().encode(pw);
+  const buf  = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// ── Passwort-Toggle ───────────────────────────────────────────────────────────
+function setupEyeToggle(inputId, btnId) {
+  $(btnId).addEventListener('click', () => {
+    const el = $(inputId);
+    el.type = el.type === 'password' ? 'text' : 'password';
+  });
+}
+setupEyeToggle('pw-input', 'pw-toggle');
+setupEyeToggle('pw-join',  'pw-join-toggle');
+
 // ── Countdown ─────────────────────────────────────────────────────────────────
 function startCountdown(createdAt) {
-  roomCreatedAt = createdAt;
   $('countdown-wrap').style.display = 'flex';
-
   function tick() {
-    const remaining = ROOM_LIFETIME - (Date.now() - createdAt);
-    if (remaining <= 0) {
-      $('countdown').textContent = '0:00:00';
-      return;
-    }
-    const h = Math.floor(remaining / 3600000);
-    const m = Math.floor((remaining % 3600000) / 60000);
-    const s = Math.floor((remaining % 60000) / 1000);
+    const rem = ROOM_LIFETIME - (Date.now() - createdAt);
+    if (rem <= 0) { $('countdown').textContent = '0:00:00'; return; }
+    const h = Math.floor(rem / 3600000);
+    const m = Math.floor((rem % 3600000) / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
     $('countdown').textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-
     const el = $('countdown');
     el.className = 'countdown-val';
-    if (remaining < 10 * 60 * 1000) el.classList.add('critical');
-    else if (remaining < 30 * 60 * 1000) el.classList.add('warning');
+    if (rem < 10*60*1000) el.classList.add('critical');
+    else if (rem < 30*60*1000) el.classList.add('warning');
   }
-
   tick();
   countdownInterval = setInterval(tick, 1000);
 }
 
-// ── QR-Code ───────────────────────────────────────────────────────────────────
+// ── QR ────────────────────────────────────────────────────────────────────────
 function showQR(link) {
   $('qr-canvas').innerHTML = '';
-  new QRCode($('qr-canvas'), {
-    text: link,
-    width: 220, height: 220,
-    colorDark: '#00c9b1',
-    colorLight: '#111418',
-    correctLevel: QRCode.CorrectLevel.M
-  });
+  new QRCode($('qr-canvas'), { text: link, width: 220, height: 220,
+    colorDark: '#00c9b1', colorLight: '#111418', correctLevel: QRCode.CorrectLevel.M });
   $('qr-overlay').style.display = 'flex';
 }
+$('btn-qr-close').addEventListener('click', () => { $('qr-overlay').style.display = 'none'; });
 
-$('btn-qr-close').addEventListener('click', () => {
-  $('qr-overlay').style.display = 'none';
-});
+// ── Partner-Banner ────────────────────────────────────────────────────────────
+function setPartnerBanner(state) {
+  // state: 'online' | 'offline' | 'hidden'
+  let banner = $('partner-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'partner-banner';
+    $('messages').before(banner);
+  }
+  banner.className = `partner-banner ${state}`;
+  if (state === 'hidden') { banner.style.display = 'none'; return; }
+  banner.style.display = 'block';
+  banner.textContent = state === 'online'
+    ? '● Gesprächspartner ist jetzt online'
+    : '○ Gesprächspartner hat die Verbindung getrennt';
+}
 
-// ── Nachrichten-UI ────────────────────────────────────────────────────────────
-function addMessage(text, role, msgId) {
+// ── Nachrichten ───────────────────────────────────────────────────────────────
+function addMessage(text, role, msgId, isPending) {
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}`;
   if (msgId) wrap.dataset.id = msgId;
@@ -120,14 +138,14 @@ function addMessage(text, role, msgId) {
   textNode.textContent = text;
   wrap.appendChild(textNode);
 
-  // Meta-Zeile für eigene Nachrichten (Gelesen + Zurückziehen)
   if (role === 'self' && msgId) {
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
 
     const readEl = document.createElement('span');
-    readEl.className = 'read-status';
-    readEl.textContent = '✓';
+    readEl.className = isPending ? 'read-status read-pending' : 'read-status';
+    readEl.textContent = isPending ? '⏳' : '✓';
+    readEl.title = isPending ? 'Wird zugestellt wenn Partner beitritt' : 'Gesendet';
     meta.appendChild(readEl);
 
     const retractBtn = document.createElement('button');
@@ -143,11 +161,10 @@ function addMessage(text, role, msgId) {
   $('messages').appendChild(wrap);
   $('messages').scrollTop = $('messages').scrollHeight;
 
-  // Eingehende Nachrichten: Gelesen-Bestätigung senden
-  if (role === 'other' && msgId && ws && ws.readyState === WebSocket.OPEN) {
+  // Eingehend: Gelesen-Bestätigung senden
+  if (role === 'other' && msgId && ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'read', id: msgId }));
   }
-
   return wrap;
 }
 
@@ -159,26 +176,33 @@ function addSystem(text) {
   $('messages').scrollTop = $('messages').scrollHeight;
 }
 
+// Gepufferte Nachricht markieren als "jetzt zugestellt"
+function markDelivered(msgId) {
+  const entry = myMsgs.get(msgId);
+  if (entry && entry.readEl.textContent === '⏳') {
+    entry.readEl.textContent = '✓';
+    entry.readEl.className = 'read-status';
+    entry.readEl.title = 'Zugestellt';
+  }
+}
+
 // ── Nachricht zurückziehen ────────────────────────────────────────────────────
-function retractMessage(msgId, el) {
+function retractMessage(msgId) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'retract', id: msgId }));
   applyRetract(msgId);
 }
 
 function applyRetract(msgId) {
-  // Eigene Nachricht
   const own = myMsgs.get(msgId);
   if (own) {
     own.el.classList.add('retracted');
-    const span = own.el.querySelector('span');
-    if (span) span.textContent = '[Nachricht zurückgezogen]';
+    own.el.querySelector('span').textContent = '[Nachricht zurückgezogen]';
     const meta = own.el.querySelector('.msg-meta');
     if (meta) meta.remove();
     myMsgs.delete(msgId);
     return;
   }
-  // Fremde Nachricht (Partner hat zurückgezogen)
   const el = $('messages').querySelector(`[data-id="${CSS.escape(msgId)}"]`);
   if (el) {
     el.classList.add('retracted');
@@ -189,8 +213,7 @@ function applyRetract(msgId) {
 
 // ── Status ────────────────────────────────────────────────────────────────────
 function setStatus(state, text) {
-  const dot = $('status-dot');
-  dot.className = state;
+  $('status-dot').className = state;
   $('status-text').textContent = text;
 }
 
@@ -200,20 +223,17 @@ function enableInput(yes) {
   if (yes) $('msg-input').focus();
 }
 
-// ── Tipp-Indikator ────────────────────────────────────────────────────────────
+// ── Typing ────────────────────────────────────────────────────────────────────
 function sendTyping(active) {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !partnerConnected) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   if (active === typingActive) return;
   typingActive = active;
   ws.send(JSON.stringify({ type: 'typing', active }));
 }
 
 $('msg-input').addEventListener('input', function () {
-  // Auto-resize
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-
-  // Typing-Signal
   sendTyping(true);
   clearTimeout(typingTimer);
   typingTimer = setTimeout(() => sendTyping(false), 2000);
@@ -229,7 +249,15 @@ $('btn-create').addEventListener('click', async () => {
     cryptoKey = key;
     isCreator = true;
 
-    const res  = await fetch('/api/room', { method: 'POST' });
+    // Optionales Passwort hashen
+    const pwPlain = $('pw-input').value;
+    const pwHash  = pwPlain ? await hashPassword(pwPlain) : null;
+
+    const res  = await fetch('/api/room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pwHash })
+    });
     if (!res.ok) throw new Error('Server-Fehler');
     const data = await res.json();
     roomId = data.roomId;
@@ -237,68 +265,86 @@ $('btn-create').addEventListener('click', async () => {
     const link = `${location.origin}/r/${roomId}#${b64url}`;
     $('share-link').textContent = link;
 
-    // QR-Button
     $('btn-qr').addEventListener('click', () => showQR(link));
-
-    // Kopieren-Button
     $('btn-copy').addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(link);
         $('btn-copy').textContent = '✓ Kopiert';
         setTimeout(() => ($('btn-copy').textContent = 'Kopieren'), 2000);
       } catch {
-        const range = document.createRange();
-        range.selectNode($('share-link'));
+        const r = document.createRange();
+        r.selectNode($('share-link'));
         getSelection().removeAllRanges();
-        getSelection().addRange(range);
+        getSelection().addRange(r);
       }
     });
 
     $('link-bar').style.display = 'block';
     showScreen('chat');
-    openWebSocket();
 
-    // Countdown starten (Erstellzeit = jetzt)
+    // Ersteller braucht kein Auth — er kennt das Passwort schon
+    pendingPwHash = null;
+    openWebSocket();
     startCountdown(Date.now());
 
   } catch (err) {
     console.error(err);
     $('btn-create').disabled = false;
     $('btn-create').textContent = '+ Privaten Chat erstellen';
-    alert('Raum konnte nicht erstellt werden. Bitte erneut versuchen.');
+    alert('Raum konnte nicht erstellt werden.');
   }
 });
 
-// ── Eingehender Link (zweite Person) ─────────────────────────────────────────
+// ── Zweite Person: Join mit Passwort ─────────────────────────────────────────
+$('btn-pw-join').addEventListener('click', joinWithPassword);
+$('pw-join').addEventListener('keydown', e => { if (e.key === 'Enter') joinWithPassword(); });
+
+async function joinWithPassword() {
+  const pw = $('pw-join').value;
+  if (!pw) { $('pw-error').textContent = 'Bitte Passwort eingeben.'; $('pw-error').style.display = 'block'; return; }
+  pendingPwHash = await hashPassword(pw);
+  $('pw-error').style.display = 'none';
+  showScreen('chat');
+  openWebSocket();
+  // Countdown nachladen
+  try {
+    const res = await fetch(`/api/room/${roomId}`);
+    if (res.ok) { const d = await res.json(); startCountdown(d.createdAt); }
+  } catch {}
+}
+
+// ── Eingehender Link ──────────────────────────────────────────────────────────
 async function initFromFragment() {
   const match = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
   if (!match) return false;
 
   const fragment = location.hash.slice(1);
-  if (!fragment) { showClosed('Ungültiger Link – kein Schlüssel gefunden.'); return true; }
+  if (!fragment) { showClosed('Ungültiger Link – kein Schlüssel.'); return true; }
 
   roomId = match[1];
-
-  try {
-    cryptoKey = await importKey(fragment);
-  } catch {
-    showClosed('Schlüssel im Link ist ungültig.');
-    return true;
-  }
+  try { cryptoKey = await importKey(fragment); }
+  catch { showClosed('Schlüssel im Link ist ungültig.'); return true; }
 
   history.replaceState(null, '', location.pathname);
-  showScreen('chat');
-  openWebSocket();
 
-  // Countdown: Erstellzeit vom Server holen
+  // Prüfen ob Raum Passwort hat
   try {
-    const res  = await fetch(`/api/room/${roomId}`);
-    if (res.ok) {
-      const data = await res.json();
-      startCountdown(data.createdAt);
+    const res = await fetch(`/api/room/${roomId}`);
+    if (!res.ok) { showClosed('Raum existiert nicht oder wurde bereits gelöscht.'); return true; }
+    const data = await res.json();
+    if (data.hasPassword) {
+      // Passwort-Screen zeigen
+      showScreen('pw');
+      return true;
     }
-  } catch {}
-
+    // Kein Passwort → direkt rein
+    showScreen('chat');
+    openWebSocket();
+    startCountdown(data.createdAt);
+  } catch {
+    showScreen('chat');
+    openWebSocket();
+  }
   return true;
 }
 
@@ -309,8 +355,14 @@ function openWebSocket() {
 
   ws.addEventListener('open', () => {
     setStatus('waiting', 'Warte auf Gesprächspartner …');
-    enableInput(true);   // Eingabe sofort freischalten — auch allein
-    addSystem('Verbunden. Du kannst schon schreiben, bevor der andere kommt.');
+    enableInput(true);
+
+    // Auth senden falls Passwort gesetzt
+    if (pendingPwHash) {
+      ws.send(JSON.stringify({ type: 'auth', pwHash: pendingPwHash }));
+    }
+
+    addSystem('Verbunden. Du kannst schon schreiben – Nachrichten werden zugestellt wenn der andere beitritt.');
   });
 
   ws.addEventListener('message', async (evt) => {
@@ -319,38 +371,61 @@ function openWebSocket() {
 
     switch (msg.type) {
 
-      case 'participant_count':
-        partnerConnected = msg.count >= 2;
-        if (partnerConnected) {
-          setStatus('connected', 'Verbunden · E2E-verschlüsselt');
-          addSystem('Gesprächspartner ist online.');
-        } else if (msg.count === 1 && partnerConnected === false) {
-          // Partner hat verlassen
-          setStatus('waiting', 'Partner hat den Chat verlassen');
-          addSystem('Gesprächspartner hat die Verbindung getrennt.');
-          partnerConnected = false;
-        }
+      case 'auth_ok':
+        addSystem('Passwort korrekt ✓');
         break;
 
+      case 'auth_fail':
+        showClosed('Falsches Passwort. Verbindung getrennt.');
+        break;
+
+      case 'participant_count': {
+        const wasConnected = partnerConnected;
+        partnerConnected = msg.count >= 2;
+
+        if (partnerConnected && !wasConnected) {
+          setStatus('connected', 'Verbunden · E2E-verschlüsselt');
+          setPartnerBanner('online');
+          addSystem('● Gesprächspartner ist online.');
+          // Alle gepufferten Nachrichten als "zugestellt" markieren
+          for (const [id] of myMsgs) markDelivered(id);
+        } else if (!partnerConnected && wasConnected) {
+          setStatus('waiting', 'Gesprächspartner offline');
+          setPartnerBanner('offline');
+          addSystem('○ Gesprächspartner hat die Verbindung getrennt.');
+        } else if (!partnerConnected) {
+          setStatus('waiting', 'Warte auf Gesprächspartner …');
+        }
+        break;
+      }
+
       case 'chat': {
-        // Nachricht entschlüsseln
         try {
           const plain = await decrypt(msg.payload);
-          addMessage(plain, 'other', msg.id);
+          // pending:true = Nachricht wurde gepuffert und jetzt nachgeliefert
+          const label = msg.pending ? `[war offline] ${plain}` : plain;
+          addMessage(msg.pending ? plain : plain, 'other', msg.id);
+          if (msg.pending) {
+            addSystem('↑ Diese Nachricht wurde gesendet bevor du beigetreten bist.');
+          }
         } catch {
           addSystem('[Nachricht konnte nicht entschlüsselt werden]');
         }
-        // Tipp-Indikator aus
         $('typing-indicator').style.display = 'none';
         break;
       }
 
+      case 'buffered':
+        // Server bestätigt: Nachricht gepuffert (Partner noch nicht da)
+        // readEl bleibt auf ⏳ — markDelivered() wird aufgerufen wenn Partner kommt
+        break;
+
       case 'read': {
-        // Eigene Nachricht als gelesen markieren
         const entry = myMsgs.get(msg.id);
         if (entry) {
           entry.readEl.textContent = '✓✓';
           entry.readEl.className = 'read-status read-check';
+          entry.readEl.title = 'Gelesen';
         }
         break;
       }
@@ -368,23 +443,25 @@ function openWebSocket() {
         break;
 
       case 'error':
-        addSystem(`[Fehler: ${msg.code}]`);
+        if (msg.code === 'not_authenticated') showClosed('Authentifizierung fehlgeschlagen.');
+        else addSystem(`[Fehler: ${msg.code}]`);
         break;
     }
   });
 
   ws.addEventListener('close', (evt) => {
     if (screens.closed.classList.contains('active')) return;
-    if (evt.code === 4001) showClosed('Dieser Raum existiert nicht oder wurde bereits gelöscht.');
-    else if (evt.code === 4002) showClosed('Raum ist bereits voll (max. 2 Teilnehmer).');
-    else if (evt.code === 4000) showClosed('Ungültiger Raum-Link.');
+    if (evt.code === 4001) showClosed('Raum existiert nicht oder wurde gelöscht.');
+    else if (evt.code === 4002) showClosed('Raum ist voll (max. 2 Teilnehmer).');
+    else if (evt.code === 4003) showClosed('Authentifizierung fehlgeschlagen.');
+    else if (evt.code === 4000) showClosed('Ungültiger Link.');
     else showClosed('Verbindung getrennt.');
   });
 
   ws.addEventListener('error', () => setStatus('disconnected', 'Verbindungsfehler'));
 }
 
-// ── Nachricht senden ──────────────────────────────────────────────────────────
+// ── Senden ────────────────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = $('msg-input');
   const text  = input.value.trim();
@@ -395,52 +472,57 @@ async function sendMessage() {
   input.style.height = '';
   sendTyping(false);
 
-  // Eindeutige Nachrichten-ID
-  const msgId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+  const msgId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
 
   try {
     const payload = await encrypt(text);
     ws.send(JSON.stringify({ type: 'chat', payload, id: msgId }));
-    addMessage(text, 'self', msgId);
-  } catch (err) {
-    console.error('Verschlüsselung fehlgeschlagen:', err);
-    addSystem('[Nachricht konnte nicht verschlüsselt werden]');
+    // isPending=true wenn Partner noch nicht da
+    addMessage(text, 'self', msgId, !partnerConnected);
+  } catch {
+    addSystem('[Verschlüsselung fehlgeschlagen]');
   }
 }
 
 $('btn-send').addEventListener('click', sendMessage);
-$('msg-input').addEventListener('keydown', (e) => {
+$('msg-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
-// ── Chat beenden ──────────────────────────────────────────────────────────────
+// ── Beenden ───────────────────────────────────────────────────────────────────
 $('btn-end').addEventListener('click', () => {
-  if (!confirm('Chat wirklich beenden? Alle Nachrichten werden gelöscht.')) return;
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' }));
+  if (!confirm('Chat wirklich beenden? Alle Nachrichten werden sofort gelöscht.')) return;
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' }));
   showClosed('Du hast den Chat beendet. Alle Nachrichten wurden gelöscht.');
 });
 
 // ── Neuer Chat ────────────────────────────────────────────────────────────────
 $('btn-new').addEventListener('click', () => {
   cryptoKey = null; roomId = null; ws = null;
-  isCreator = false; partnerConnected = false;
-  typingActive = false;
+  isCreator = partnerConnected = typingActive = false;
+  pendingPwHash = null;
   clearInterval(countdownInterval);
   $('messages').innerHTML = '';
+  myMsgs.clear();
   $('typing-indicator').style.display = 'none';
   $('countdown-wrap').style.display = 'none';
   $('link-bar').style.display = 'none';
   enableInput(false);
+  $('pw-input').value = '';
+  const b = $('partner-banner');
+  if (b) b.style.display = 'none';
   history.replaceState(null, '', '/');
   showScreen('home');
   $('btn-create').disabled = false;
   $('btn-create').textContent = '+ Privaten Chat erstellen';
 });
 
-// ── Geschlossen ───────────────────────────────────────────────────────────────
+// ── Closed ────────────────────────────────────────────────────────────────────
 function showClosed(reason) {
   clearInterval(countdownInterval);
-  if (ws && ws.readyState === WebSocket.OPEN) try { ws.close(); } catch {}
+  if (ws?.readyState === WebSocket.OPEN) try { ws.close(); } catch {}
   ws = null;
   $('closed-reason').textContent = reason || 'Dieser Raum wurde gelöscht.';
   showScreen('closed');
@@ -449,12 +531,28 @@ function showClosed(reason) {
 function closedReason(code) {
   return {
     user_ended: 'Der Gesprächspartner hat den Chat beendet.',
-    inactivity: 'Raum nach 2 Stunden automatisch geschlossen.',
+    inactivity: 'Raum nach 2 Stunden Inaktivität geschlossen.',
     all_left:   'Alle Teilnehmer haben den Raum verlassen.',
   }[code] || 'Raum wurde geschlossen.';
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+// ── Schriftgröße ──────────────────────────────────────────────────────────────
+const FONT_MIN = 11;
+const FONT_MAX = 22;
+const FONT_STEP = 1;
+let fontSize = 14;
+
+function applyFontSize(size) {
+  fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, size));
+  $('messages').style.fontSize = fontSize + 'px';
+  $('msg-input').style.fontSize = fontSize + 'px';
+  $('font-size-label').textContent = fontSize + 'px';
+}
+
+$('font-up').addEventListener('click',   () => applyFontSize(fontSize + FONT_STEP));
+$('font-down').addEventListener('click', () => applyFontSize(fontSize - FONT_STEP));
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   const handled = await initFromFragment();
   if (!handled) showScreen('home');

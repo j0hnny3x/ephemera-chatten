@@ -7,13 +7,12 @@
   <meta name="robots" content="noindex, nofollow">
   <title>ephemera — privater Einmal-Chat</title>
   <link rel="stylesheet" href="/style.css">
-  <!-- QR-Code Bibliothek (nur canvas, kein Tracking) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <div id="app">
 
-  <!-- ── Startseite ─────────────────────────────────────────────── -->
+  <!-- ── Startseite ─────────────────────────────────────────── -->
   <div id="screen-home" class="screen active">
     <div class="logo-wrap">
       <div class="logo-icon"></div>
@@ -24,35 +23,76 @@
     </div>
     <div class="card">
       <ul class="features">
-        <li>Kein Login. Kein Account. Keine Datenbank.</li>
-        <li>AES-GCM-Verschlüsselung im Browser – der Server sieht keinen Klartext.</li>
-        <li>Maximal 2 Teilnehmer · Raum läuft 2 Stunden.</li>
-        <li>Raum wird nach Ende sofort und vollständig gelöscht.</li>
+        <li>Kein Login · Keine Datenbank · Kein Account</li>
+        <li>AES-GCM-256 im Browser — Server sieht keinen Klartext</li>
+        <li>Max. 2 Teilnehmer · Raum läuft 2 Stunden</li>
+        <li>Raum wird nach Ende sofort gelöscht</li>
       </ul>
     </div>
+
+    <!-- Optionales Passwort -->
+    <div class="card">
+      <div class="pw-label">Raumpasswort <span class="optional">(optional)</span></div>
+      <div class="pw-row">
+        <input id="pw-input" type="password" placeholder="Leer lassen = kein Passwort"
+          autocomplete="new-password" spellcheck="false" maxlength="128">
+        <button id="pw-toggle" class="btn btn-ghost pw-eye" type="button" title="Anzeigen">👁</button>
+      </div>
+      <p class="pw-hint">Beide Teilnehmer müssen das Passwort kennen. Es wird <strong>nicht</strong> an den Server übertragen.</p>
+    </div>
+
     <button id="btn-create" class="btn btn-primary">&#x2B;&ensp;Privaten Chat erstellen</button>
   </div>
 
-  <!-- ── Chat ───────────────────────────────────────────────────── -->
+  <!-- ── Passwort-Eingabe (zweite Person) ───────────────────── -->
+  <div id="screen-pw" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span>ephemera</span></h1>
+        <div class="sub">Passwort erforderlich</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
+        Dieser Raum ist passwortgeschützt. Bitte gib das Passwort ein, das dir der Ersteller mitgeteilt hat.
+      </p>
+      <div class="pw-row">
+        <input id="pw-join" type="password" placeholder="Passwort eingeben …"
+          autocomplete="current-password" spellcheck="false" maxlength="128">
+        <button id="pw-join-toggle" class="btn btn-ghost pw-eye" type="button">👁</button>
+      </div>
+      <div id="pw-error" style="display:none;color:var(--danger);font-size:.8rem;margin-top:.5rem">
+        Falsches Passwort.
+      </div>
+      <button id="btn-pw-join" class="btn btn-primary" style="margin-top:1rem;width:100%">Beitreten</button>
+    </div>
+  </div>
+
+  <!-- ── Chat ───────────────────────────────────────────────── -->
   <div id="screen-chat" class="screen">
 
-    <!-- Toolbar oben -->
     <div class="chat-toolbar">
       <div id="status-bar">
         <div id="status-dot"></div>
         <span id="status-text">Verbinde…</span>
       </div>
+      <div id="font-controls">
+        <button class="font-btn" id="font-down" title="Schrift kleiner">A−</button>
+        <span id="font-size-label">14px</span>
+        <button class="font-btn" id="font-up"   title="Schrift größer">A+</button>
+      </div>
       <div id="countdown-wrap" style="display:none">
-        <span class="sub">Raum läuft ab in</span>
+        <span class="sub">ab in</span>
         <span id="countdown" class="countdown-val">2:00:00</span>
       </div>
       <button id="btn-end" class="btn btn-danger">Beenden</button>
     </div>
 
-    <!-- Link-Leiste (nur für Ersteller sichtbar) -->
+    <!-- Link-Leiste -->
     <div id="link-bar" style="display:none">
       <div class="link-box">
-        <div id="share-link" title="Zum Kopieren klicken"></div>
+        <div id="share-link"></div>
         <button id="btn-copy" class="btn btn-ghost copy-btn">Kopieren</button>
         <button id="btn-qr"   class="btn btn-ghost">QR</button>
       </div>
@@ -67,32 +107,26 @@
       </div>
     </div>
 
-    <!-- Nachrichten -->
     <div id="messages"></div>
 
-    <!-- Tipp-Indikator -->
     <div id="typing-indicator" style="display:none">
-      <span class="typing-dot"></span>
-      <span class="typing-dot"></span>
-      <span class="typing-dot"></span>
+      <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
       <span style="margin-left:.4rem;font-size:.72rem;color:var(--muted)">schreibt…</span>
     </div>
 
-    <!-- Eingabe -->
     <div class="input-row">
       <textarea id="msg-input" rows="2" maxlength="4000"
-        placeholder="Nachricht … (Enter senden, Shift+Enter Zeilenumbruch)"
-        disabled></textarea>
+        placeholder="Nachricht … (Enter senden, Shift+Enter Zeilenumbruch)" disabled></textarea>
       <button id="btn-send" class="btn btn-primary" disabled>Senden</button>
     </div>
   </div>
 
-  <!-- ── Geschlossen ────────────────────────────────────────────── -->
+  <!-- ── Geschlossen ─────────────────────────────────────────── -->
   <div id="screen-closed" class="screen">
     <div class="card closed-card">
       <div class="closed-icon">&#x25A1;</div>
       <h1>Chat beendet</h1>
-      <p id="closed-reason">Dieser Raum wurde gelöscht. Alle Nachrichten sind weg.</p>
+      <p id="closed-reason">Dieser Raum wurde gelöscht.</p>
       <br>
       <button id="btn-new" class="btn btn-primary">Neuen Chat erstellen</button>
     </div>

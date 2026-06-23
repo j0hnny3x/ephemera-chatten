@@ -11,35 +11,33 @@ const server = http.createServer(app);
 const wss    = new WebSocketServer({ server });
 
 // ── In-Memory-Räume ───────────────────────────────────────────────────────────
-// Map<roomId, {
-//   clients:    Set<WebSocket>,
-//   timer:      Timeout,
-//   createdAt:  number,
-//   pwHash:     string|null,       // SHA-256 des Passworts (hex), oder null
-//   pending:    Array<{id,payload,ts}> // gepufferte Nachrichten bis Partner kommt
-// }>
 const rooms = new Map();
 
-const INACTIVITY_MS  = 2 * 60 * 60 * 1000; // 2 h
+const ROOM_LIFETIME  = 2 * 60 * 60 * 1000; // 2 h Gesamt-Lifetime
+const GRACE_MS       = 5 * 60 * 1000;       // 5 Min. Kulanz wenn alle weg
 const MAX_CLIENTS    = 2;
 const MAX_MSG_LEN    = 6000;
-const MAX_PENDING    = 50; // max. gepufferte Nachrichten
+const MAX_PENDING    = 50;
+const PING_INTERVAL  = 25 * 1000;           // Server-Ping alle 25 Sek.
 
 function createRoom(id, pwHash) {
-  const timer = setTimeout(() => deleteRoom(id, 'inactivity'), INACTIVITY_MS);
+  // Haupt-Timer: Raum stirbt spätestens nach ROOM_LIFETIME
+  const hardTimer  = setTimeout(() => deleteRoom(id, 'inactivity'), ROOM_LIFETIME);
   rooms.set(id, {
-    clients:   new Set(),
-    timer,
-    createdAt: Date.now(),
-    pwHash:    pwHash || null,
-    pending:   [],
+    clients:    new Set(),
+    hardTimer,
+    graceTimer: null,
+    createdAt:  Date.now(),
+    pwHash:     pwHash || null,
+    pending:    [],
   });
 }
 
 function deleteRoom(id, reason) {
   const room = rooms.get(id);
   if (!room) return;
-  clearTimeout(room.timer);
+  clearTimeout(room.hardTimer);
+  clearTimeout(room.graceTimer);
   for (const client of room.clients) {
     try { client.send(JSON.stringify({ type: 'room_closed', reason })); } catch {}
     try { client.close(); } catch {}
@@ -48,11 +46,20 @@ function deleteRoom(id, reason) {
   console.log(`[room] ${id.slice(0, 8)}… closed (${reason})`);
 }
 
-function resetTimer(id) {
+// Startet/resettet den Kulanz-Timer wenn alle Clients weg sind
+function startGrace(id) {
   const room = rooms.get(id);
   if (!room) return;
-  clearTimeout(room.timer);
-  room.timer = setTimeout(() => deleteRoom(id, 'inactivity'), INACTIVITY_MS);
+  clearTimeout(room.graceTimer);
+  room.graceTimer = setTimeout(() => deleteRoom(id, 'all_left'), GRACE_MS);
+  console.log(`[room] ${id.slice(0, 8)}… grace period started (${GRACE_MS / 1000}s)`);
+}
+
+function cancelGrace(id) {
+  const room = rooms.get(id);
+  if (!room) return;
+  clearTimeout(room.graceTimer);
+  room.graceTimer = null;
 }
 
 // ── Security-Header ───────────────────────────────────────────────────────────
@@ -75,11 +82,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Statische Dateien ─────────────────────────────────────────────────────────
 app.use(express.static(__dirname, { etag: false }));
 app.use(express.json({ limit: '8kb' }));
 
-// ── REST: Raum erstellen ──────────────────────────────────────────────────────
+// ── REST ──────────────────────────────────────────────────────────────────────
 app.post('/api/room', (req, res) => {
   const id     = crypto.randomBytes(16).toString('hex');
   const pwHash = (typeof req.body?.pwHash === 'string' && req.body.pwHash.length === 64)
@@ -88,14 +94,12 @@ app.post('/api/room', (req, res) => {
   res.json({ roomId: id, hasPassword: !!pwHash });
 });
 
-// ── REST: Raum-Info ───────────────────────────────────────────────────────────
 app.get('/api/room/:id', (req, res) => {
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'not_found' });
   res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash });
 });
 
-// ── SPA-Fallback ──────────────────────────────────────────────────────────────
 app.get('/r/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -111,36 +115,33 @@ wss.on('connection', (ws, req) => {
   if (!room)                            { ws.close(4001, 'room_not_found'); return; }
   if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');      return; }
 
-  // Passwort-Prüfung: Server erwartet beim ersten Msg-Typ 'auth' den Hash
-  // Wenn kein Passwort gesetzt, direkt zulassen
   let authenticated = !room.pwHash;
-  let authTimer = null;
-
-  if (room.pwHash) {
-    // 5 Sekunden Zeit für Auth, sonst Verbindung trennen
-    authTimer = setTimeout(() => {
-      ws.close(4003, 'auth_timeout');
-    }, 5000);
-  }
+  let authTimer     = room.pwHash ? setTimeout(() => ws.close(4003, 'auth_timeout'), 5000) : null;
+  let isAlive       = true;
 
   room.clients.add(ws);
-  resetTimer(roomId);
-
-  // Allen mitteilen wie viele verbunden sind
+  cancelGrace(roomId); // Jemand ist zurück → Kulanz stoppen
   broadcastCount(room);
 
-  // Gepufferte Nachrichten ausliefern wenn zweite Person kommt
-  if (room.clients.size === 2 && room.pending.length > 0 && authenticated) {
+  // Gepufferte Nachrichten ausliefern wenn 2. Person kommt
+  function flushPending() {
+    if (room.pending.length === 0) return;
     const toFlush = [...room.pending];
-    room.pending = [];
+    room.pending  = [];
     for (const p of toFlush) {
-      try {
-        ws.send(JSON.stringify({ type: 'chat', payload: p.payload, id: p.id, ts: p.ts, pending: true }));
-      } catch {}
+      try { ws.send(JSON.stringify({ type: 'chat', payload: p.payload, id: p.id, ts: p.ts, pending: true })); } catch {}
     }
   }
 
+  if (room.clients.size === 2 && authenticated) flushPending();
+
+  // ── Server-seitiger Ping/Pong ─────────────────────────────────────────────
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('message', (raw) => {
+    ws.isAlive = true; // Jede eingehende Nachricht = noch lebendig
+
     if (raw.length > MAX_MSG_LEN) {
       ws.send(JSON.stringify({ type: 'error', code: 'msg_too_long' }));
       return;
@@ -148,23 +149,20 @@ wss.on('connection', (ws, req) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
-    // ── Passwort-Auth ──────────────────────────────────────────────
+    // Client-seitiger Keepalive-Ping
+    if (msg.type === 'ping') {
+      ws.send(JSON.stringify({ type: 'pong' }));
+      return;
+    }
+
+    // Auth
     if (msg.type === 'auth') {
       if (!room.pwHash) { authenticated = true; return; }
       clearTimeout(authTimer);
       if (typeof msg.pwHash === 'string' && msg.pwHash === room.pwHash) {
         authenticated = true;
         ws.send(JSON.stringify({ type: 'auth_ok' }));
-        // Jetzt ggf. pending ausliefern
-        if (room.clients.size === 2 && room.pending.length > 0) {
-          const toFlush = [...room.pending];
-          room.pending = [];
-          for (const p of toFlush) {
-            try {
-              ws.send(JSON.stringify({ type: 'chat', payload: p.payload, id: p.id, ts: p.ts, pending: true }));
-            } catch {}
-          }
-        }
+        if (room.clients.size === 2) flushPending();
       } else {
         ws.send(JSON.stringify({ type: 'auth_fail' }));
         ws.close(4003, 'auth_failed');
@@ -177,36 +175,23 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    resetTimer(roomId);
-
     if (msg.type === 'chat') {
       if (typeof msg.payload !== 'string' || typeof msg.id !== 'string') return;
       const ts = Date.now();
-
-      // Partner vorhanden → direkt weiterleiten
       if (room.clients.size === 2) {
         broadcastExcept(room, ws, { type: 'chat', payload: msg.payload, id: msg.id, ts });
       } else {
-        // Puffern bis Partner kommt
-        if (room.pending.length < MAX_PENDING) {
-          room.pending.push({ payload: msg.payload, id: msg.id, ts });
-        }
-        // Absender informieren dass Nachricht gepuffert wurde
+        if (room.pending.length < MAX_PENDING) room.pending.push({ payload: msg.payload, id: msg.id, ts });
         ws.send(JSON.stringify({ type: 'buffered', id: msg.id }));
       }
-
     } else if (msg.type === 'read') {
       broadcastExcept(room, ws, { type: 'read', id: msg.id });
-
     } else if (msg.type === 'typing') {
       broadcastExcept(room, ws, { type: 'typing', active: msg.active });
-
     } else if (msg.type === 'retract') {
       if (typeof msg.id !== 'string') return;
-      // Aus pending entfernen falls noch nicht zugestellt
       room.pending = room.pending.filter(p => p.id !== msg.id);
       broadcastExcept(room, ws, { type: 'retract', id: msg.id });
-
     } else if (msg.type === 'end') {
       deleteRoom(roomId, 'user_ended');
     }
@@ -216,9 +201,10 @@ wss.on('connection', (ws, req) => {
     clearTimeout(authTimer);
     room.clients.delete(ws);
     const remaining = rooms.get(roomId);
-    if (remaining) {
-      broadcastCount(remaining);
-      if (remaining.clients.size === 0) deleteRoom(roomId, 'all_left');
+    if (!remaining) return;
+    broadcastCount(remaining);
+    if (remaining.clients.size === 0) {
+      startGrace(roomId); // Nicht sofort löschen — 5 Min. Kulanz
     }
   });
 
@@ -227,6 +213,22 @@ wss.on('connection', (ws, req) => {
     room.clients.delete(ws);
   });
 });
+
+// ── Ping-Loop: tote Verbindungen aufräumen ────────────────────────────────────
+const pingInterval = setInterval(() => {
+  for (const [id, room] of rooms) {
+    for (const ws of room.clients) {
+      if (!ws.isAlive) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }
+}, PING_INTERVAL);
+
+server.on('close', () => clearInterval(pingInterval));
 
 function broadcastCount(room) {
   broadcast(room, { type: 'participant_count', count: room.clients.size });

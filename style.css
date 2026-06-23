@@ -186,3 +186,26 @@ h1 span{color:var(--accent)}
 }
 .font-btn:hover { border-color: var(--accent); color: var(--accent); }
 #font-size-label { min-width: 2.5rem; text-align: center; font-size: .75rem; }
+
+/* ── Copy-Notice ─────────────────────────────────────────────── */
+#copy-notice {
+  margin-top: .6rem;
+  font-size: .75rem;
+  color: var(--accent);
+  letter-spacing: .02em;
+  animation: fadeIn .4s ease;
+}
+
+/* ── Reconnect-Banner ────────────────────────────────────────── */
+#reconnect-banner {
+  display: none;
+  background: #f0a50018;
+  border: 1px solid #f0a50055;
+  border-radius: var(--r);
+  padding: .5rem 1rem;
+  font-size: .78rem;
+  color: var(--warn);
+  text-align: center;
+  animation: fadeIn .3s ease;
+}
+#reconnect-banner.visible { display: block; }

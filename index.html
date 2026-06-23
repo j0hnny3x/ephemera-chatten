@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ephemera — privater Einmal-Chat</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Startseite ─────────────────────────────────────────────── -->
+  <div id="screen-home" class="screen active">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span>ephemera</span></h1>
+        <div class="sub">Privater Einmal-Chat · Ende-zu-Ende-verschlüsselt</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <ul class="features">
+        <li>Kein Login. Kein Account. Keine Datenbank.</li>
+        <li>AES-GCM-Verschlüsselung im Browser – der Server sieht keinen Klartext.</li>
+        <li>Maximal 2 Teilnehmer pro Raum.</li>
+        <li>Raum wird nach Ende sofort gelöscht.</li>
+        <li>Nach 30 Min. Inaktivität automatisch geschlossen.</li>
+      </ul>
+    </div>
+
+    <button id="btn-create" class="btn btn-primary">
+      &#x2B;&ensp;Privaten Chat erstellen
+    </button>
+  </div>
+
+  <!-- ── Link teilen ────────────────────────────────────────────── -->
+  <div id="screen-share" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span>ephemera</span></h1>
+        <div class="sub">Raum erstellt — warte auf Gesprächspartner</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="share-label">Diesen Link teilen</div>
+      <div class="link-box">
+        <div id="share-link" title="Link zum Kopieren markieren"></div>
+        <button id="btn-copy" class="btn btn-ghost copy-btn">Kopieren</button>
+      </div>
+    </div>
+
+    <div class="card" style="font-size:0.78rem; color: var(--muted); line-height:1.8;">
+      <strong style="color:var(--text);">Wie funktioniert das?</strong><br>
+      Der Schlüssel steht im <code style="color:var(--accent)">#Fragment</code> der URL –
+      dieser Teil wird <strong>nie</strong> an den Server übertragen. Nur wer den Link kennt,
+      kann die Nachrichten entschlüsseln.
+    </div>
+  </div>
+
+  <!-- ── Chat ───────────────────────────────────────────────────── -->
+  <div id="screen-chat" class="screen">
+    <div class="chat-toolbar">
+      <div id="status-bar">
+        <div id="status-dot"></div>
+        <span id="status-text">Verbinde…</span>
+      </div>
+      <button id="btn-end" class="btn btn-danger">Chat beenden</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <div class="input-row">
+      <textarea
+        id="msg-input"
+        rows="2"
+        maxlength="4000"
+        placeholder="Nachricht eingeben … (Enter zum Senden)"
+        disabled
+      ></textarea>
+      <button id="btn-send" class="btn btn-primary" disabled>Senden</button>
+    </div>
+  </div>
+
+  <!-- ── Geschlossen ────────────────────────────────────────────── -->
+  <div id="screen-closed" class="screen">
+    <div class="card closed-card">
+      <div class="closed-icon">&#x25A1;</div>
+      <h1>Chat beendet</h1>
+      <p id="closed-reason">Dieser Raum wurde gelöscht. Alle Nachrichten sind weg.</p>
+      <br>
+      <button id="btn-new" class="btn btn-primary">Neuen Chat erstellen</button>
+    </div>
+  </div>
+
+</div>
+<script src="/client.js"></script>
+</body>
+</html>

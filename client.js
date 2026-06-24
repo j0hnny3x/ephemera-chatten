@@ -34,6 +34,7 @@ const sdTimers = new Map();
 const $ = id => document.getElementById(id);
 const screens = {
   home:   $('screen-home'),
+  share:  $('screen-share'),
   pw:     $('screen-pw'),
   chat:   $('screen-chat'),
   closed: $('screen-closed'),
@@ -816,6 +817,8 @@ $('msg-input').addEventListener('keydown', e => {
 });
 
 // ── Raum erstellen ────────────────────────────────────────────────────────────
+let pendingRoomLink = null;
+
 $('btn-create').addEventListener('click', async () => {
   $('btn-create').disabled = true; $('btn-create').textContent = '[ INITIALISIERUNG … ]';
   try {
@@ -828,29 +831,76 @@ $('btn-create').addEventListener('click', async () => {
     if (!res.ok) throw new Error();
     const data = await res.json(); roomId = data.roomId;
     const link = `${location.origin}/r/${roomId}#${b64url}`;
-    $('share-link').textContent = link;
+    pendingRoomLink = link;
 
+    // Link im Share-Screen anzeigen
+    const linkEl = $('share-link-big');
+    if (linkEl) linkEl.textContent = link;
+
+    // Sofort in Zwischenablage kopieren
     try {
       await navigator.clipboard.writeText(link);
-      $('copy-notice').textContent = '📋 LINK KOPIERT — In WhatsApp einfügen!';
+      $('copy-notice-big').textContent = '✓ LINK KOPIERT — In WhatsApp einfügen!';
     } catch {
-      $('copy-notice').textContent = '> Link antippen und kopieren.';
+      $('copy-notice-big').textContent = 'Link antippen und kopieren.';
     }
 
-    $('btn-qr').addEventListener('click', () => showQR(link));
-    $('btn-copy').addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(link); $('btn-copy').textContent = '✓'; setTimeout(() => $('btn-copy').textContent = 'COPY', 2000); }
-      catch { getSelection().selectAllChildren($('share-link')); }
-    });
-
+    // Jetzt erst Share-Screen zeigen — KEIN WebSocket noch
     pendingPwHash = null;
-    $('link-bar').style.display = 'block';
-    showScreen('chat'); openWebSocket(); startCountdown(Date.now());
+    showScreen('share');
+    startCountdown(Date.now());
+
   } catch {
     $('btn-create').disabled = false; $('btn-create').textContent = '[ SICHEREN CHAT ERSTELLEN ]';
     alert('Raum konnte nicht erstellt werden.');
   }
 });
+
+// Kopieren-Button im Share-Screen
+if ($('btn-copy-big')) {
+  $('btn-copy-big').addEventListener('click', async () => {
+    if (!pendingRoomLink) return;
+    try {
+      await navigator.clipboard.writeText(pendingRoomLink);
+      $('btn-copy-big').textContent = '✓ KOPIERT!';
+      $('copy-notice-big').textContent = '✓ LINK KOPIERT — In WhatsApp einfügen!';
+      setTimeout(() => { $('btn-copy-big').textContent = '📋 LINK KOPIEREN'; }, 2500);
+    } catch {
+      getSelection().selectAllChildren($('share-link-big'));
+    }
+  });
+}
+
+// QR im Share-Screen
+if ($('btn-share-qr')) {
+  $('btn-share-qr').addEventListener('click', () => {
+    if (pendingRoomLink) showQR(pendingRoomLink);
+  });
+}
+
+// CHAT ÖFFNEN — erst jetzt WebSocket verbinden
+if ($('btn-open-chat')) {
+  $('btn-open-chat').addEventListener('click', () => {
+    // Link in der Chat-Leiste auch setzen
+    if ($('share-link') && pendingRoomLink) $('share-link').textContent = pendingRoomLink;
+    if ($('copy-notice') && pendingRoomLink) $('copy-notice').textContent = '📋 Link bereits kopiert';
+    $('link-bar').style.display = 'block';
+
+    // QR und Copy in der Chat-Leiste
+    $('btn-qr').onclick  = () => { if (pendingRoomLink) showQR(pendingRoomLink); };
+    $('btn-copy').onclick = async () => {
+      if (!pendingRoomLink) return;
+      try {
+        await navigator.clipboard.writeText(pendingRoomLink);
+        $('btn-copy').textContent = '✓'; setTimeout(() => $('btn-copy').textContent = 'COPY', 2000);
+      } catch { getSelection().selectAllChildren($('share-link')); }
+    };
+
+    showScreen('chat');
+    // Jetzt erst WebSocket öffnen — Link ist bereits geteilt
+    openWebSocket();
+  });
+}
 
 // ── PW Join ───────────────────────────────────────────────────────────────────
 $('btn-pw-join').addEventListener('click', joinWithPassword);
@@ -1036,7 +1086,7 @@ $('btn-end').addEventListener('click', () => {
 $('btn-new').addEventListener('click', () => {
   intentionalClose = true; cancelReconnect(); stopKeepalive();
   for (const t of sdTimers.values()) clearInterval(t); sdTimers.clear();
-  cryptoKey = null; roomId = null; ws = null;
+  cryptoKey = null; roomId = null; ws = null; pendingRoomLink = null;
   partnerConnected = typingActive = sdTextEnabled = false;
   pendingPwHash = null; reconnectAttempts = 0; intentionalClose = false;
   clearInterval(countdownInterval);
@@ -1053,6 +1103,8 @@ $('btn-new').addEventListener('click', () => {
   $('reconnect-banner').className       = '';
   $('sealed-banner').classList.remove('visible');
   $('pw-input').value = ''; $('pw-strength-fill').style.width = '0';
+  if ($('copy-notice-big')) $('copy-notice-big').textContent = '';
+  if ($('share-link-big')) $('share-link-big').textContent = '';
   enableInput(false);
   const b = $('partner-banner'); if (b) b.style.display = 'none';
   history.replaceState(null, '', '/');

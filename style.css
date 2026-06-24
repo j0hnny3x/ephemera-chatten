@@ -659,3 +659,39 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
 @supports (-webkit-touch-callout: none) {
   #msg-input { font-size: 16px; } /* Verhindert Auto-Zoom */
 }
+
+/* ── Share Screen ────────────────────────────────── */
+#share-link-big {
+  flex: 1;
+  background: #000;
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  color: var(--matrix);
+  font-family: var(--mono);
+  font-size: .7rem;
+  padding: .5rem .7rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: all;
+  text-shadow: 0 0 5px var(--matrix);
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  word-break: break-all;
+  cursor: text;
+}
+#copy-notice-big {
+  font-size: .8rem;
+  color: var(--matrix);
+  text-align: center;
+  min-height: 1.4rem;
+  text-shadow: 0 0 6px var(--matrix);
+  letter-spacing: .04em;
+}
+.share-howto {
+  font-size: .82rem;
+  color: var(--muted);
+  line-height: 1.9;
+}
+.share-howto strong { color: var(--text-bright); }

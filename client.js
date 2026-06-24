@@ -92,7 +92,17 @@ async function hashPassword(pw) {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-// ── iOS Audio Format Fix ──────────────────────────────────────────────────────
+// ── Session Token — verhindert doppelte Verbindungen ──────────────────────────
+// Bleibt im Tab, wird bei jedem Reconnect mitgeschickt
+// Server erkennt: gleicher Token = Reconnect → alte Verbindung ersetzen
+function getSessionToken() {
+  let token = sessionStorage.getItem('ephemera_token');
+  if (!token) {
+    token = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem('ephemera_token', token);
+  }
+  return token;
+}
 function getSupportedAudioMime() {
   const types = ['audio/mp4','audio/aac','audio/webm;codecs=opus','audio/webm','audio/ogg'];
   for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
@@ -422,77 +432,110 @@ $('btn-sd-toggle').addEventListener('click',()=>{sdTextEnabled=!sdTextEnabled;$(
 $('btn-extend').addEventListener('click',()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'extend'}));});
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WebRTC ANRUF
+// WebRTC ANRUF — mit korrektem Handshake
+// Ablauf: Anrufer sendet 'webrtc_call' → Partner klickt Annehmen →
+//         Partner sendet 'webrtc_ready' → Anrufer sendet Offer →
+//         Partner sendet Answer → ICE Kandidaten → Verbindung steht
 // ══════════════════════════════════════════════════════════════════════════════
 async function getIceServers(){
   if(iceServers)return iceServers;
   try{const r=await fetch('/api/turn');iceServers=(await r.json()).iceServers;}
-  catch{iceServers=[{urls:'stun:stun.l.google.com:19302'}];}
+  catch{iceServers=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];}
   return iceServers;
 }
 
 async function startCall(){
-  if(!partnerConnected){addSystem('Partner muss erst online sein um anzurufen.');return;}
-  if(peerConn){addSystem('Bereits in einem Anruf.');return;}
+  if(!partnerConnected){addSystem('// Partner muss erst online sein um anzurufen.');return;}
+  if(peerConn){addSystem('// Bereits in einem Anruf.');return;}
+  // Schritt 1: Partner informieren — warten auf 'webrtc_ready' bevor Offer
+  ws.send(JSON.stringify({type:'webrtc_call'}));
+  showCallBar('Warte auf Annahme…');
+  addSystem('📞 Anruf wird gestartet…');
+  // Timeout falls kein 'webrtc_ready' kommt
+  window._callTimeout = setTimeout(()=>{
+    if(!peerConn){cleanupCall();addSystem('// Anruf nicht angenommen.');}
+  }, 30000);
+}
+
+async function onCallReady(){
+  // Partner hat angenommen — jetzt Offer senden
+  clearTimeout(window._callTimeout);
   try{
     localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
     peerConn=await createPeerConnection();
     localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
-    const offer=await peerConn.createOffer();
+    const offer=await peerConn.createOffer({offerToReceiveAudio:true});
     await peerConn.setLocalDescription(offer);
-    ws.send(JSON.stringify({type:'webrtc_call'})); // Partner informieren
     ws.send(JSON.stringify({type:'webrtc_offer',sdp:peerConn.localDescription}));
-    showCallBar('Rufe an…');
-    addSystem('📞 Anruf gestartet…');
+    showCallBar('Verbinde Anruf…');
   }catch(e){
-    addSystem('[Mikrofonzugriff verweigert oder Fehler: '+e.message+']');
+    addSystem('[Fehler beim Anruf: '+e.message+']');
     cleanupCall();
   }
 }
 
 async function answerCall(){
   $('call-incoming').style.display='none';
+  stopRingtone();
+  // Schritt 1: Anrufer informieren dass wir bereit sind
+  ws.send(JSON.stringify({type:'webrtc_ready'}));
+  showCallBar('Verbinde…');
+  addSystem('📞 Anruf wird verbunden…');
+  // Offer kommt jetzt vom Anrufer — wird in 'webrtc_offer' case verarbeitet
   try{
     localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
     peerConn=await createPeerConnection();
     localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
-    // Warte auf gespeichertes Angebot
+    // Wenn Offer schon da → sofort verarbeiten
     if(window._pendingOffer){
-      await peerConn.setRemoteDescription(new RTCSessionDescription(window._pendingOffer));
-      const answer=await peerConn.createAnswer();
-      await peerConn.setLocalDescription(answer);
-      ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+      await handleOffer(window._pendingOffer);
       window._pendingOffer=null;
     }
-    showCallBar('Verbinde…');
-    stopRingtone();
+    // sonst warten bis 'webrtc_offer' ankommt (setze Flag)
+    window._callAnswered=true;
   }catch(e){
     addSystem('[Fehler beim Annehmen: '+e.message+']');
+    ws.send(JSON.stringify({type:'webrtc_hangup'}));
     cleanupCall();
   }
 }
 
+async function handleOffer(sdp){
+  if(!peerConn)return;
+  await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer=await peerConn.createAnswer();
+  await peerConn.setLocalDescription(answer);
+  ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+}
+
 async function createPeerConnection(){
   const servers=await getIceServers();
-  const pc=new RTCPeerConnection({iceServers:servers});
+  const pc=new RTCPeerConnection({iceServers:servers,iceCandidatePoolSize:10});
   pc.onicecandidate=e=>{
     if(e.candidate&&ws?.readyState===1)
       ws.send(JSON.stringify({type:'webrtc_ice',candidate:e.candidate}));
   };
   pc.ontrack=e=>{
-    const remoteAudio=$('remote-audio');
-    if(remoteAudio){remoteAudio.srcObject=e.streams[0];remoteAudio.play().catch(()=>{});}
+    const ra=$('remote-audio');
+    if(ra){ra.srcObject=e.streams[0];ra.play().catch(()=>{});}
   };
   pc.onconnectionstatechange=()=>{
+    console.log('[WebRTC] state:', pc.connectionState);
     if(pc.connectionState==='connected'){
       showCallBar('Verbunden');
       $('call-status-dot').classList.add('active');
-      startCallTimer();
-      addSystem('📞 Anruf verbunden.');
-    }else if(['disconnected','failed','closed'].includes(pc.connectionState)){
-      addSystem('📵 Anruf beendet.');
+      startCallTimer();addSystem('📞 Anruf verbunden — Ende-zu-Ende verschlüsselt (DTLS-SRTP)');
+    }else if(['disconnected','failed'].includes(pc.connectionState)){
+      addSystem('📵 Anrufverbindung unterbrochen.');
+      // Kurz warten und prüfen ob reconnect klappt
+      setTimeout(()=>{if(peerConn?.connectionState!=='connected')cleanupCall();},3000);
+    }else if(pc.connectionState==='closed'){
       cleanupCall();
     }
+  };
+  pc.onicegatheringstatechange=()=>{
+    if(pc.iceGatheringState==='complete')
+      console.log('[WebRTC] ICE gathering complete');
   };
   return pc;
 }
@@ -520,6 +563,8 @@ function hangup(){
 
 function cleanupCall(){
   clearInterval(callTimer);callSeconds=0;
+  clearTimeout(window._callTimeout);
+  window._pendingOffer=null;window._callAnswered=false;
   stopRingtone();
   if(localStream)localStream.getTracks().forEach(t=>t.stop());localStream=null;
   if(peerConn)peerConn.close();peerConn=null;
@@ -807,7 +852,8 @@ async function initFromFragment(){
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function openWebSocket(){
   if(ws){try{ws.close();}catch{}ws=null;}stopKeepalive();
-  ws=new WebSocket(`${WS_PROTO}//${location.host}/ws/${roomId}`);
+  const token = getSessionToken();
+  ws=new WebSocket(`${WS_PROTO}//${location.host}/ws/${roomId}?token=${encodeURIComponent(token)}`);
 
   ws.addEventListener('open',()=>{
     reconnectAttempts=0;cancelReconnect();
@@ -872,25 +918,39 @@ function openWebSocket(){
 
       // ── WebRTC Signaling ──────────────────────────────────────────────────
       case 'webrtc_call':
-        // Eingehender Anruf
+        // Eingehender Anruf — warten bis User annimmt, DANN ready senden
         $('call-incoming').style.display='block';
         playRingtone(true);vibrate([200,100,200,100,200]);
         addSystem('📞 Eingehender Anruf — Annehmen oder Ablehnen');
         break;
 
+      case 'webrtc_ready':
+        // Partner hat angenommen — jetzt können wir den Offer senden
+        clearTimeout(window._callTimeout);
+        await onCallReady();
+        break;
+
       case 'webrtc_offer':
-        window._pendingOffer=msg.sdp;
+        if(window._callAnswered&&peerConn){
+          // Wir haben schon angenommen und PeerConnection ist bereit
+          await handleOffer(msg.sdp);
+          window._callAnswered=false;
+        }else{
+          // Noch nicht angenommen → speichern
+          window._pendingOffer=msg.sdp;
+        }
         break;
 
       case 'webrtc_answer':
-        if(peerConn&&peerConn.signalingState!=='stable'){
+        if(peerConn&&peerConn.signalingState==='have-local-offer'){
           try{await peerConn.setRemoteDescription(new RTCSessionDescription(msg.sdp));}
           catch(e){addSystem('[Anruf-Fehler: '+e.message+']');}
         }break;
 
       case 'webrtc_ice':
         if(peerConn&&msg.candidate){
-          try{await peerConn.addIceCandidate(new RTCIceCandidate(msg.candidate));}catch{}
+          try{await peerConn.addIceCandidate(new RTCIceCandidate(msg.candidate));}
+          catch(e){console.warn('[ICE]',e.message);}
         }break;
 
       case 'webrtc_hangup':

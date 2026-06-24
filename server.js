@@ -13,17 +13,22 @@ const wss    = new WebSocketServer({ server, maxPayload: 64 * 1024 * 1024 });
 
 const rooms = new Map();
 
-const ROOM_LIFETIME  = 2 * 60 * 60 * 1000;
-const MAX_CLIENTS    = 2;
-const MAX_MSG_LEN    = 32 * 1024 * 1024;
-const MAX_PENDING    = 100;
-const PING_INTERVAL  = 25 * 1000;
+const ROOM_LIFETIME = 2 * 60 * 60 * 1000;
+const MAX_CLIENTS   = 2;
+const MAX_MSG_LEN   = 32 * 1024 * 1024;
+const MAX_PENDING   = 100;
+const PING_INTERVAL = 25 * 1000;
 
 function createRoom(id, pwHash) {
   const hardTimer = setTimeout(() => deleteRoom(id, 'inactivity'), ROOM_LIFETIME);
   rooms.set(id, {
-    clients: new Set(), hardTimer, createdAt: Date.now(),
-    pwHash: pwHash || null, pending: [], sealed: false, extensionCount: 0,
+    clients:        new Map(),   // token → ws (statt Set)
+    hardTimer,
+    createdAt:      Date.now(),
+    pwHash:         pwHash || null,
+    pending:        [],
+    sealed:         false,
+    extensionCount: 0,
   });
 }
 
@@ -31,14 +36,15 @@ function deleteRoom(id, reason) {
   const room = rooms.get(id);
   if (!room) return;
   clearTimeout(room.hardTimer);
-  for (const c of room.clients) {
-    try { c.send(JSON.stringify({ type: 'room_closed', reason })); } catch {}
-    try { c.close(); } catch {}
+  for (const ws of room.clients.values()) {
+    try { ws.send(JSON.stringify({ type: 'room_closed', reason })); } catch {}
+    try { ws.close(); } catch {}
   }
   rooms.delete(id);
   console.log(`[room] ${id.slice(0,8)}… closed (${reason})`);
 }
 
+// Security Headers
 app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -76,29 +82,14 @@ app.get('/api/room/:id', (req, res) => {
   res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash, sealed: room.sealed, clientCount: room.clients.size });
 });
 
-// TURN credentials für WebRTC
 app.get('/api/turn', (req, res) => {
-  res.json({
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-      {
-        urls: 'turns:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-    ]
-  });
+  res.json({ iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443',username: 'openrelayproject', credential: 'openrelayproject' },
+  ]});
 });
 
 app.get('/r/:id', (req, res) => {
@@ -107,30 +98,51 @@ app.get('/r/:id', (req, res) => {
 
 app.get('/og-image.png', (req, res) => {
   const svgPath = path.join(__dirname, 'og-image.svg');
-  if (fs.existsSync(svgPath)) {
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.sendFile(svgPath);
-  } else {
-    res.status(404).end();
-  }
+  if (fs.existsSync(svgPath)) { res.setHeader('Content-Type', 'image/svg+xml'); res.sendFile(svgPath); }
+  else res.status(404).end();
 });
 
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
-  const match = req.url.match(/^\/ws\/([a-f0-9]{32})$/);
+  // URL: /ws/<roomId>?token=<sessionToken>
+  const match = req.url.match(/^\/ws\/([a-f0-9]{32})/);
   if (!match) { ws.close(4000, 'invalid_room'); return; }
 
   const roomId = match[1];
-  const room   = rooms.get(roomId);
-  if (!room)                            { ws.close(4001, 'room_not_found'); return; }
-  if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');      return; }
+  const urlParams = new URLSearchParams(req.url.split('?')[1] || '');
+  const token = urlParams.get('token') || crypto.randomBytes(8).toString('hex');
+
+  const room = rooms.get(roomId);
+  if (!room) { ws.close(4001, 'room_not_found'); return; }
+
+  // ── Session-Token: Reconnect des gleichen Clients erkennen ─────────────────
+  const existingWs = room.clients.get(token);
+  if (existingWs && existingWs !== ws) {
+    // Gleicher Token → alte Verbindung ersetzen (Reconnect)
+    console.log(`[room] ${roomId.slice(0,8)}… reconnect token=${token.slice(0,6)}`);
+    try { existingWs.close(1000, 'replaced'); } catch {}
+    room.clients.delete(token);
+  }
+
+  // Maximal 2 verschiedene Tokens (= 2 echte Teilnehmer)
+  if (!room.clients.has(token) && room.clients.size >= MAX_CLIENTS) {
+    ws.close(4002, 'room_full'); return;
+  }
 
   let authenticated = !room.pwHash;
   let authTimer = room.pwHash ? setTimeout(() => ws.close(4003, 'auth_timeout'), 8000) : null;
   ws.isAlive = true;
+  ws.sessionToken = token;
   ws.on('pong', () => { ws.isAlive = true; });
 
-  room.clients.add(ws);
-  if (room.clients.size === 2) { room.sealed = true; broadcast(room, { type: 'room_sealed' }); }
+  room.clients.set(token, ws);
+
+  // Versiegeln wenn 2 verschiedene Tokens
+  if (room.clients.size === 2) {
+    room.sealed = true;
+    broadcastAll(room, { type: 'room_sealed' });
+  }
+
   broadcastCount(room);
 
   function flushPending() {
@@ -164,15 +176,14 @@ wss.on('connection', (ws, req) => {
     if (!authenticated) { ws.send(JSON.stringify({ type: 'error', code: 'not_authenticated' })); return; }
 
     const ts = Date.now();
-    const forwardTypes = ['chat', 'reply', 'image', 'audio', 'video', 'file', 'reaction',
-                          'webrtc_offer', 'webrtc_answer', 'webrtc_ice', 'webrtc_hangup', 'webrtc_call'];
 
-    if (forwardTypes.includes(msg.type)) {
-      if (!['webrtc_offer','webrtc_answer','webrtc_ice','webrtc_hangup','webrtc_call'].includes(msg.type)) {
-        if (typeof msg.id !== 'string') return;
-      }
+    // Nachrichten-Typen
+    const dataTypes = ['chat','reply','image','audio','video','file','reaction'];
+    const rtcTypes  = ['webrtc_call','webrtc_ready','webrtc_offer','webrtc_answer','webrtc_ice','webrtc_hangup'];
+
+    if (dataTypes.includes(msg.type)) {
+      if (typeof msg.id !== 'string') return;
       const fwd = { type: msg.type, id: msg.id, ts };
-
       if (['chat','reply','image','audio','video','file'].includes(msg.type)) {
         if (typeof msg.payload !== 'string') return;
         fwd.payload = msg.payload;
@@ -182,19 +193,17 @@ wss.on('connection', (ws, req) => {
       if (msg.type === 'file')     { fwd.filename = msg.filename; fwd.filesize = msg.filesize; }
       if (msg.type === 'reaction') { fwd.msgId = msg.msgId; fwd.emoji = msg.emoji; }
       if (msg.sdSeconds)           { fwd.sdSeconds = msg.sdSeconds; }
-      // WebRTC signaling
-      if (msg.type === 'webrtc_offer')  { fwd.sdp = msg.sdp; }
-      if (msg.type === 'webrtc_answer') { fwd.sdp = msg.sdp; }
-      if (msg.type === 'webrtc_ice')    { fwd.candidate = msg.candidate; }
 
-      if (room.clients.size === 2) {
-        broadcastExcept(room, ws, fwd);
-      } else {
-        if (!msg.type.startsWith('webrtc_')) {
-          if (room.pending.length < MAX_PENDING) room.pending.push(fwd);
-          ws.send(JSON.stringify({ type: 'buffered', id: msg.id }));
-        }
-      }
+      if (room.clients.size === 2) broadcastExcept(room, ws, fwd);
+      else { if (room.pending.length < MAX_PENDING) room.pending.push(fwd); ws.send(JSON.stringify({ type: 'buffered', id: msg.id })); }
+
+    } else if (rtcTypes.includes(msg.type)) {
+      // WebRTC Signaling blind weiterleiten
+      const fwd = { type: msg.type };
+      if (msg.sdp)       fwd.sdp       = msg.sdp;
+      if (msg.candidate) fwd.candidate = msg.candidate;
+      broadcastExcept(room, ws, fwd);
+
     } else if (msg.type === 'read') {
       const readAt = new Date(ts).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
       broadcastExcept(room, ws, { type: 'read', id: msg.id, readAt });
@@ -212,7 +221,7 @@ wss.on('connection', (ws, req) => {
       room.extensionCount++;
       clearTimeout(room.hardTimer);
       room.hardTimer = setTimeout(() => deleteRoom(roomId, 'inactivity'), 60 * 60 * 1000);
-      broadcast(room, { type: 'extended', newExpiry: Date.now() + 60*60*1000, extensionsLeft: 3 - room.extensionCount });
+      broadcastAll(room, { type: 'extended', newExpiry: Date.now() + 60*60*1000, extensionsLeft: 3 - room.extensionCount });
     } else if (msg.type === 'self_destruct_ack') {
       broadcastExcept(room, ws, { type: 'self_destruct_ack', id: msg.id });
     } else if (msg.type === 'end') {
@@ -220,37 +229,46 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code) => {
     clearTimeout(authTimer);
-    room.clients.delete(ws);
-    const remaining = rooms.get(roomId);
-    if (!remaining) return;
-    remaining.sealed = remaining.clients.size >= 2;
-    broadcastCount(remaining);
+    // Nur entfernen wenn das aktuelle WS noch der Eintrag für diesen Token ist
+    // (nicht wenn es schon durch Reconnect ersetzt wurde)
+    if (room.clients.get(token) === ws) {
+      room.clients.delete(token);
+      const remaining = rooms.get(roomId);
+      if (!remaining) return;
+      remaining.sealed = remaining.clients.size >= 2;
+      broadcastCount(remaining);
+    }
   });
 
-  ws.on('error', () => { clearTimeout(authTimer); room.clients.delete(ws); });
+  ws.on('error', () => {
+    clearTimeout(authTimer);
+    if (room.clients.get(token) === ws) room.clients.delete(token);
+  });
 });
 
+// Ping-Loop
 const pingInterval = setInterval(() => {
   for (const [, room] of rooms) {
-    for (const ws of room.clients) {
+    for (const ws of room.clients.values()) {
       if (!ws.isAlive) { ws.terminate(); continue; }
       ws.isAlive = false; ws.ping();
     }
   }
 }, PING_INTERVAL);
-
 server.on('close', () => clearInterval(pingInterval));
 
-function broadcastCount(room) { broadcast(room, { type: 'participant_count', count: room.clients.size }); }
-function broadcast(room, msg) {
+function broadcastCount(room) {
+  broadcastAll(room, { type: 'participant_count', count: room.clients.size });
+}
+function broadcastAll(room, msg) {
   const data = JSON.stringify(msg);
-  for (const c of room.clients) if (c.readyState === 1) c.send(data);
+  for (const ws of room.clients.values()) if (ws.readyState === 1) ws.send(data);
 }
 function broadcastExcept(room, sender, msg) {
   const data = JSON.stringify(msg);
-  for (const c of room.clients) if (c !== sender && c.readyState === 1) c.send(data);
+  for (const ws of room.clients.values()) if (ws !== sender && ws.readyState === 1) ws.send(data);
 }
 
 const PORT = process.env.PORT || 3000;

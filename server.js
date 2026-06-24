@@ -12,20 +12,25 @@ const wss    = new WebSocketServer({ server, maxPayload: 64 * 1024 * 1024 });
 
 const rooms = new Map();
 
-const ROOM_LIFETIME = 2 * 60 * 60 * 1000;
-const GRACE_MS      = 30 * 60 * 1000;
-const MAX_CLIENTS   = 2;
-const MAX_MSG_LEN   = 32 * 1024 * 1024; // 32MB für Video
-const MAX_PENDING   = 100;
-const PING_INTERVAL = 25 * 1000;
+const ROOM_LIFETIME  = 2 * 60 * 60 * 1000; // 2h fix — kein Grace-Timer mehr
+const MAX_CLIENTS    = 2;
+const MAX_MSG_LEN    = 32 * 1024 * 1024;
+const MAX_PENDING    = 100;
+const PING_INTERVAL  = 25 * 1000;
 
 function createRoom(id, pwHash) {
+  // Raum läuft immer 2h ab Erstellung — egal ob jemand drin ist
   const hardTimer = setTimeout(() => deleteRoom(id, 'inactivity'), ROOM_LIFETIME);
   rooms.set(id, {
-    clients: new Set(), hardTimer, graceTimer: null,
-    createdAt: Date.now(), pwHash: pwHash || null,
-    pending: [], sealed: false,
-    extensionCount: 0  // max 3 Verlängerungen
+    clients:        new Set(),
+    hardTimer,
+    createdAt:      Date.now(),
+    pwHash:         pwHash || null,
+    pending:        [],
+    sealed:         false,
+    extensionCount: 0,
+    // Letzter Verbindungszeitpunkt pro Client-ID (für Reconnect-Erkennung)
+    lastSeen:       new Map(),
   });
 }
 
@@ -33,7 +38,6 @@ function deleteRoom(id, reason) {
   const room = rooms.get(id);
   if (!room) return;
   clearTimeout(room.hardTimer);
-  clearTimeout(room.graceTimer);
   for (const c of room.clients) {
     try { c.send(JSON.stringify({ type: 'room_closed', reason })); } catch {}
     try { c.close(); } catch {}
@@ -42,20 +46,7 @@ function deleteRoom(id, reason) {
   console.log(`[room] ${id.slice(0,8)}… closed (${reason})`);
 }
 
-function startGrace(id) {
-  const room = rooms.get(id);
-  if (!room) return;
-  clearTimeout(room.graceTimer);
-  room.graceTimer = setTimeout(() => deleteRoom(id, 'all_left'), GRACE_MS);
-}
-
-function cancelGrace(id) {
-  const room = rooms.get(id);
-  if (!room) return;
-  clearTimeout(room.graceTimer);
-  room.graceTimer = null;
-}
-
+// Security Headers
 app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -90,7 +81,12 @@ app.post('/api/room', (req, res) => {
 app.get('/api/room/:id', (req, res) => {
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'not_found' });
-  res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash, sealed: room.sealed });
+  res.json({
+    createdAt:   room.createdAt,
+    hasPassword: !!room.pwHash,
+    sealed:      room.sealed,
+    clientCount: room.clients.size,
+  });
 });
 
 app.get('/r/:id', (req, res) => {
@@ -103,15 +99,19 @@ wss.on('connection', (ws, req) => {
 
   const roomId = match[1];
   const room   = rooms.get(roomId);
+
   if (!room)                            { ws.close(4001, 'room_not_found'); return; }
   if (room.clients.size >= MAX_CLIENTS) { ws.close(4002, 'room_full');      return; }
 
   let authenticated = !room.pwHash;
-  let authTimer = room.pwHash ? setTimeout(() => ws.close(4003, 'auth_timeout'), 5000) : null;
+  let authTimer = room.pwHash
+    ? setTimeout(() => ws.close(4003, 'auth_timeout'), 8000) // 8s statt 5s
+    : null;
+
   ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
 
   room.clients.add(ws);
-  cancelGrace(roomId);
 
   // Raum versiegeln wenn beide drin
   if (room.clients.size === 2) {
@@ -121,17 +121,16 @@ wss.on('connection', (ws, req) => {
 
   broadcastCount(room);
 
+  // Gepufferte Nachrichten ausliefern
   function flushPending() {
     if (!room.pending.length) return;
-    const toFlush = [...room.pending];
-    room.pending  = [];
+    const toFlush  = [...room.pending];
+    room.pending   = [];
     for (const p of toFlush) {
       try { ws.send(JSON.stringify({ ...p, pending: true })); } catch {}
     }
   }
   if (room.clients.size === 2 && authenticated) flushPending();
-
-  ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
     ws.isAlive = true;
@@ -142,8 +141,10 @@ wss.on('connection', (ws, req) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
+    // Keepalive
     if (msg.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); return; }
 
+    // Auth
     if (msg.type === 'auth') {
       if (!room.pwHash) { authenticated = true; return; }
       clearTimeout(authTimer);
@@ -158,20 +159,24 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    if (!authenticated) { ws.send(JSON.stringify({ type: 'error', code: 'not_authenticated' })); return; }
+    if (!authenticated) {
+      ws.send(JSON.stringify({ type: 'error', code: 'not_authenticated' }));
+      return;
+    }
 
     const ts = Date.now();
-    const forwardTypes = ['chat', 'reply', 'image', 'audio', 'video', 'file', 'reaction', 'location'];
+    const forwardTypes = ['chat', 'reply', 'image', 'audio', 'video', 'file', 'reaction'];
 
     if (forwardTypes.includes(msg.type)) {
       if (typeof msg.id !== 'string') return;
       const fwd = { type: msg.type, id: msg.id, ts };
+
       if (['chat','reply','image','audio','video','file'].includes(msg.type)) {
         if (typeof msg.payload !== 'string') return;
         fwd.payload = msg.payload;
       }
       if (msg.type === 'reply')    { fwd.quoteId = msg.quoteId; fwd.quoteText = msg.quoteText; }
-      if (msg.type === 'image')    { fwd.mime = msg.mime; fwd.sdSeconds = msg.sdSeconds; }
+      if (msg.type === 'image')    { fwd.mime = msg.mime; }
       if (msg.type === 'file')     { fwd.filename = msg.filename; fwd.filesize = msg.filesize; }
       if (msg.type === 'reaction') { fwd.msgId = msg.msgId; fwd.emoji = msg.emoji; }
       if (msg.sdSeconds)           { fwd.sdSeconds = msg.sdSeconds; }
@@ -186,24 +191,33 @@ wss.on('connection', (ws, req) => {
     } else if (msg.type === 'read') {
       const readAt = new Date(ts).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
       broadcastExcept(room, ws, { type: 'read', id: msg.id, readAt });
+
     } else if (msg.type === 'typing') {
       broadcastExcept(room, ws, { type: 'typing', active: msg.active });
+
     } else if (msg.type === 'retract') {
       if (typeof msg.id !== 'string') return;
       room.pending = room.pending.filter(p => p.id !== msg.id);
       broadcastExcept(room, ws, { type: 'retract', id: msg.id });
+
     } else if (msg.type === 'edit') {
-      broadcastExcept(room, ws, { type: 'edit', id: msg.id, payload: msg.payload, editedAt: ts });
+      if (typeof msg.payload !== 'string') return;
+      broadcastExcept(room, ws, { type: 'edit', id: msg.id, payload: msg.payload });
+
     } else if (msg.type === 'extend') {
-      if (room.extensionCount >= 3) { ws.send(JSON.stringify({ type: 'error', code: 'max_extensions' })); return; }
+      if (room.extensionCount >= 3) {
+        ws.send(JSON.stringify({ type: 'error', code: 'max_extensions' })); return;
+      }
       room.extensionCount++;
       clearTimeout(room.hardTimer);
       room.hardTimer = setTimeout(() => deleteRoom(roomId, 'inactivity'), 60 * 60 * 1000);
-      const newExpiry = Date.now() + 60 * 60 * 1000;
-      broadcast(room, { type: 'extended', newExpiry, extensionsLeft: 3 - room.extensionCount });
+      broadcast(room, { type: 'extended', newExpiry: Date.now() + 60*60*1000, extensionsLeft: 3 - room.extensionCount });
+
     } else if (msg.type === 'self_destruct_ack') {
       broadcastExcept(room, ws, { type: 'self_destruct_ack', id: msg.id });
+
     } else if (msg.type === 'end') {
+      // Nur wenn explizit beendet → Raum löschen
       deleteRoom(roomId, 'user_ended');
     }
   });
@@ -213,26 +227,35 @@ wss.on('connection', (ws, req) => {
     room.clients.delete(ws);
     const remaining = rooms.get(roomId);
     if (!remaining) return;
-    remaining.sealed = false; // Raum nicht mehr versiegelt
+
+    // Raum NICHT löschen wenn alle weg — er läuft einfach weiter bis 2h
+    remaining.sealed = remaining.clients.size >= 2;
     broadcastCount(remaining);
-    if (remaining.clients.size === 0) startGrace(roomId);
+    // Kein Grace-Timer, kein sofortiges Löschen
   });
 
-  ws.on('error', () => { clearTimeout(authTimer); room.clients.delete(ws); });
+  ws.on('error', () => {
+    clearTimeout(authTimer);
+    room.clients.delete(ws);
+  });
 });
 
+// Ping-Loop für tote Verbindungen
 const pingInterval = setInterval(() => {
   for (const [, room] of rooms) {
     for (const ws of room.clients) {
       if (!ws.isAlive) { ws.terminate(); continue; }
-      ws.isAlive = false; ws.ping();
+      ws.isAlive = false;
+      ws.ping();
     }
   }
 }, PING_INTERVAL);
 
 server.on('close', () => clearInterval(pingInterval));
 
-function broadcastCount(room) { broadcast(room, { type: 'participant_count', count: room.clients.size }); }
+function broadcastCount(room) {
+  broadcast(room, { type: 'participant_count', count: room.clients.size });
+}
 function broadcast(room, msg) {
   const data = JSON.stringify(msg);
   for (const c of room.clients) if (c.readyState === 1) c.send(data);

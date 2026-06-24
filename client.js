@@ -819,33 +819,66 @@ $('msg-input').addEventListener('keydown', e => {
 // ── Raum erstellen ────────────────────────────────────────────────────────────
 let pendingRoomLink = null;
 
+// Einladungs-Text bauen
+function buildInviteText(link, senderName) {
+  const name = senderName ? senderName.trim() : '';
+  const shortLink = link.replace(/^https?:\/\//, '').split('#')[0]; // nur Domain/Pfad ohne Schlüssel
+  const fullLink  = link; // vollständiger Link mit Schlüssel
+
+  const greeting = name ? `${name} lädt dich zu einem privaten Chat ein.` : 'Du wurdest zu einem privaten Chat eingeladen.';
+
+  return {
+    message: `🔒 ${greeting}\n\nSicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig\n\n${fullLink}`,
+    shortLink,
+    greeting,
+  };
+}
+
+// Share-Screen befüllen
+function populateShareScreen(link, senderName) {
+  const { message, shortLink, greeting } = buildInviteText(link, senderName);
+
+  // Einladungs-Vorschau
+  const senderLine = $('invite-sender-line');
+  if (senderLine) senderLine.textContent = greeting;
+
+  const textPreview = $('invite-text-preview');
+  if (textPreview) textPreview.textContent = 'Sicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig';
+
+  const linkShort = $('invite-link-short');
+  if (linkShort) linkShort.textContent = shortLink;
+
+  return message;
+}
+
 $('btn-create').addEventListener('click', async () => {
   $('btn-create').disabled = true; $('btn-create').textContent = '[ INITIALISIERUNG … ]';
   try {
     const { key, b64url } = await generateKey(); cryptoKey = key;
-    const pwPlain = $('pw-input').value;
-    const pwHash  = pwPlain ? await hashPassword(pwPlain) : null;
-    const res  = await fetch('/api/room', {
+    const pwPlain    = $('pw-input').value;
+    const senderName = ($('sender-name')?.value || '').trim();
+    const pwHash     = pwPlain ? await hashPassword(pwPlain) : null;
+
+    const res = await fetch('/api/room', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pwHash })
     });
     if (!res.ok) throw new Error();
     const data = await res.json(); roomId = data.roomId;
+
     const link = `${location.origin}/r/${roomId}#${b64url}`;
     pendingRoomLink = link;
 
-    // Link im Share-Screen anzeigen
-    const linkEl = $('share-link-big');
-    if (linkEl) linkEl.textContent = link;
+    // Share-Screen befüllen & Einladungs-Text generieren
+    const inviteMsg = populateShareScreen(link, senderName);
 
-    // Sofort in Zwischenablage kopieren
+    // Sofort in Zwischenablage — den vollständigen Einladungstext
     try {
-      await navigator.clipboard.writeText(link);
-      $('copy-notice-big').textContent = '✓ LINK KOPIERT — In WhatsApp einfügen!';
+      await navigator.clipboard.writeText(inviteMsg);
+      $('copy-notice-big').textContent = '✓ EINLADUNG KOPIERT — Jetzt in WhatsApp einfügen!';
     } catch {
-      $('copy-notice-big').textContent = 'Link antippen und kopieren.';
+      $('copy-notice-big').textContent = 'Auf EINLADUNG KOPIEREN tippen';
     }
 
-    // Jetzt erst Share-Screen zeigen — KEIN WebSocket noch
     pendingPwHash = null;
     showScreen('share');
     startCountdown(Date.now());
@@ -860,13 +893,19 @@ $('btn-create').addEventListener('click', async () => {
 if ($('btn-copy-big')) {
   $('btn-copy-big').addEventListener('click', async () => {
     if (!pendingRoomLink) return;
+    const senderName = ($('sender-name')?.value || '').trim();
+    const { message } = buildInviteText(pendingRoomLink, senderName);
     try {
-      await navigator.clipboard.writeText(pendingRoomLink);
+      await navigator.clipboard.writeText(message);
       $('btn-copy-big').textContent = '✓ KOPIERT!';
-      $('copy-notice-big').textContent = '✓ LINK KOPIERT — In WhatsApp einfügen!';
-      setTimeout(() => { $('btn-copy-big').textContent = '📋 LINK KOPIEREN'; }, 2500);
+      $('copy-notice-big').textContent = '✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';
+      setTimeout(() => { $('btn-copy-big').textContent = '📋 EINLADUNG KOPIEREN'; }, 2500);
     } catch {
-      getSelection().selectAllChildren($('share-link-big'));
+      // Fallback: nur Link markieren
+      if ($('share-link-big')) {
+        const r = document.createRange(); r.selectNode($('share-link-big'));
+        getSelection().removeAllRanges(); getSelection().addRange(r);
+      }
     }
   });
 }
@@ -881,12 +920,9 @@ if ($('btn-share-qr')) {
 // CHAT ÖFFNEN — erst jetzt WebSocket verbinden
 if ($('btn-open-chat')) {
   $('btn-open-chat').addEventListener('click', () => {
-    // Link in der Chat-Leiste auch setzen
     if ($('share-link') && pendingRoomLink) $('share-link').textContent = pendingRoomLink;
     if ($('copy-notice') && pendingRoomLink) $('copy-notice').textContent = '📋 Link bereits kopiert';
     $('link-bar').style.display = 'block';
-
-    // QR und Copy in der Chat-Leiste
     $('btn-qr').onclick  = () => { if (pendingRoomLink) showQR(pendingRoomLink); };
     $('btn-copy').onclick = async () => {
       if (!pendingRoomLink) return;
@@ -895,10 +931,8 @@ if ($('btn-open-chat')) {
         $('btn-copy').textContent = '✓'; setTimeout(() => $('btn-copy').textContent = 'COPY', 2000);
       } catch { getSelection().selectAllChildren($('share-link')); }
     };
-
     showScreen('chat');
-    // Jetzt erst WebSocket öffnen — Link ist bereits geteilt
-    openWebSocket();
+    openWebSocket(); // Erst hier WebSocket öffnen
   });
 }
 
@@ -1105,6 +1139,8 @@ $('btn-new').addEventListener('click', () => {
   $('pw-input').value = ''; $('pw-strength-fill').style.width = '0';
   if ($('copy-notice-big')) $('copy-notice-big').textContent = '';
   if ($('share-link-big')) $('share-link-big').textContent = '';
+  if ($('sender-name')) $('sender-name').value = '';
+  pendingRoomLink = null;
   enableInput(false);
   const b = $('partner-banner'); if (b) b.style.display = 'none';
   history.replaceState(null, '', '/');

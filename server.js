@@ -93,6 +93,18 @@ app.get('/r/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// OG-Image für Link-Vorschau in WhatsApp/iMessage
+app.get('/og-image.png', (req, res) => {
+  // SVG als PNG-Ersatz senden (WhatsApp akzeptiert auch SVG wenn als PNG gesendet)
+  const svgPath = path.join(__dirname, 'og-image.svg');
+  if (require('fs').existsSync(svgPath)) {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.sendFile(svgPath);
+  } else {
+    res.status(404).end();
+  }
+});
+
 wss.on('connection', (ws, req) => {
   const match = req.url.match(/^\/ws\/([a-f0-9]{32})$/);
   if (!match) { ws.close(4000, 'invalid_room'); return; }

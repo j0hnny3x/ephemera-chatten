@@ -2,1165 +2,959 @@
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
 const MAX_TEXT_LEN   = 4000;
-const MAX_IMG_BYTES  = 2  * 1024 * 1024;
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const IMG_MAX_DIM    = 1600;
-const IMG_QUALITY    = 0.82;
+const MAX_IMG_BYTES  = 1 * 1024 * 1024;   // 1MB — stabiler auf Mobile
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const IMG_MAX_DIM    = 1280;
+const IMG_QUALITY    = 0.78;
 const WS_PROTO       = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ROOM_LIFETIME  = 2 * 60 * 60 * 1000;
-const KEEPALIVE_MS   = 15 * 1000;  // alle 15s ping — aggressiver für Mobile
-const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000]; // feste Stufen
+const KEEPALIVE_MS   = 15 * 1000;
+const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
 const REACTIONS      = ['👍','❤️','😂','😮','😢','🔥'];
 const EDIT_WINDOW_MS = 30 * 1000;
 const VIDEO_MAX_SEC  = 60;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let cryptoKey = null;   // EIN fester Schlüssel für die gesamte Session
-let ws = null, roomId = null;
+let cryptoKey = null, ws = null, roomId = null;
 let partnerConnected = false, intentionalClose = false;
 let countdownInterval = null, keepaliveTimer = null, reconnectTimer = null;
 let reconnectAttempts = 0, typingTimer = null, typingActive = false;
-let pendingPwHash = null, fontSize = 16;
+let pendingPwHash = null, fontSize = 16, pendingRoomLink = null;
 let mediaRecorder = null, audioChunks = [], recInterval = null, recSeconds = 0;
 let videoRecorder = null, videoChunks = [], videoRecInterval = null, videoRecSeconds = 0;
 let pendingMediaData = null, pendingMediaMime = null, pendingMediaType = null;
 let replyToId = null, replyToText = null, editingId = null;
 let sdTextEnabled = false, unread = 0, roomExpiry = null;
 let hasShownNewMsgDivider = false;
-const myMsgs  = new Map();   // msgId → { el, readEl }
+const myMsgs  = new Map();
 const sdTimers = new Map();
+
+// ── WebRTC State ──────────────────────────────────────────────────────────────
+let peerConn    = null;
+let localStream = null;
+let callTimer   = null;
+let callSeconds = 0;
+let isMuted     = false;
+let iceServers  = null;
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const screens = {
-  home:   $('screen-home'),
-  share:  $('screen-share'),
-  pw:     $('screen-pw'),
-  chat:   $('screen-chat'),
-  closed: $('screen-closed'),
-};
+const screens = { home:$('screen-home'), share:$('screen-share'), pw:$('screen-pw'), chat:$('screen-chat'), closed:$('screen-closed') };
 function showScreen(n) {
-  for (const [k, el] of Object.entries(screens)) el.classList.toggle('active', k === n);
-  if (n !== 'chat') window.scrollTo(0, 0);
+  for (const [k,el] of Object.entries(screens)) el.classList.toggle('active', k===n);
+  if (n !== 'chat') window.scrollTo(0,0);
 }
 
-// ── Matrix Canvas ─────────────────────────────────────────────────────────────
+// ── Matrix ────────────────────────────────────────────────────────────────────
 function initMatrix() {
-  const canvas = $('matrix-canvas');
-  const ctx    = canvas.getContext('2d');
+  const canvas = $('matrix-canvas'), ctx = canvas.getContext('2d');
   const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
-  resize();
-  window.addEventListener('resize', resize);
-  const chars = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01ABCDEF'.split('');
-  const fs = 14;
-  let cols  = Math.floor(canvas.width / fs);
-  let drops = Array(cols).fill(1);
-  window.addEventListener('resize', () => {
-    cols  = Math.floor(canvas.width / fs);
-    drops = Array(cols).fill(1);
-  });
+  resize(); window.addEventListener('resize', resize);
+  const chars = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉ01ABCDEF'.split('');
+  const fs = 14; let cols = Math.floor(canvas.width/fs), drops = Array(cols).fill(1);
+  window.addEventListener('resize', () => { cols=Math.floor(canvas.width/fs); drops=Array(cols).fill(1); });
   setInterval(() => {
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    drops.forEach((y, i) => {
-      const c = chars[Math.floor(Math.random() * chars.length)];
-      const g = Math.floor(Math.random() * 120 + 135);
-      ctx.fillStyle = `rgba(0,${g},${Math.floor(Math.random()*20)},${Math.random()*.6+.4})`;
-      ctx.font = fs + 'px monospace';
-      ctx.fillText(c, i * fs, y * fs);
-      if (y * fs > canvas.height && Math.random() > 0.972) drops[i] = 0;
-      drops[i]++;
+    ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    drops.forEach((y,i) => {
+      const c=chars[Math.floor(Math.random()*chars.length)], g=Math.floor(Math.random()*120+135);
+      ctx.fillStyle=`rgba(0,${g},${Math.floor(Math.random()*20)},${Math.random()*.6+.4})`;
+      ctx.font=fs+'px monospace'; ctx.fillText(c,i*fs,y*fs);
+      if(y*fs>canvas.height&&Math.random()>0.972) drops[i]=0; drops[i]++;
     });
-  }, 45);
+  },45);
 }
 initMatrix();
 
-// ── Krypto — simpel & stabil ──────────────────────────────────────────────────
-// Ein fester AES-GCM-256 Schlüssel pro Session — kein Forward-Secrecy-Counter
-// der Reconnects kaputt macht. Jede Nachricht bekommt eigenen zufälligen IV.
+// ── Krypto ────────────────────────────────────────────────────────────────────
 async function generateKey() {
-  const key = await crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
-  );
-  const raw    = await crypto.subtle.exportKey('raw', key);
-  const b64url = btoa(String.fromCharCode(...new Uint8Array(raw)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  return { key, b64url };
+  const key = await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);
+  const raw = await crypto.subtle.exportKey('raw',key);
+  const b64url = btoa(String.fromCharCode(...new Uint8Array(raw))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  return {key,b64url};
 }
-
 async function importKey(b64url) {
-  const raw = Uint8Array.from(
-    atob(b64url.replace(/-/g, '+').replace(/_/g, '/')),
-    c => c.charCodeAt(0)
-  );
-  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const raw = Uint8Array.from(atob(b64url.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
+  return crypto.subtle.importKey('raw',raw,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 }
-
 async function encrypt(plaintext) {
-  const iv  = crypto.getRandomValues(new Uint8Array(12));
-  const ct  = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, cryptoKey, new TextEncoder().encode(plaintext)
-  );
-  const buf = new Uint8Array(12 + ct.byteLength);
-  buf.set(iv); buf.set(new Uint8Array(ct), 12);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},cryptoKey,new TextEncoder().encode(plaintext));
+  const buf=new Uint8Array(12+ct.byteLength); buf.set(iv); buf.set(new Uint8Array(ct),12);
   return btoa(String.fromCharCode(...buf));
 }
-
 async function decrypt(b64) {
-  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const pt  = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: buf.slice(0, 12) }, cryptoKey, buf.slice(12)
-  );
+  const buf=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:buf.slice(0,12)},cryptoKey,buf.slice(12));
   return new TextDecoder().decode(pt);
 }
-
 async function hashPassword(pw) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-// ── PW Stärke ─────────────────────────────────────────────────────────────────
-$('pw-input').addEventListener('input', function() {
-  const pw = this.value; let s = 0;
-  if (pw.length > 6) s++; if (pw.length > 10) s++;
-  if (/[A-Z]/.test(pw)) s++; if (/[0-9]/.test(pw)) s++; if (/[^a-zA-Z0-9]/.test(pw)) s++;
-  const fill = $('pw-strength-fill');
-  fill.style.width = (s / 5 * 100) + '%';
-  fill.style.background = ['','#ff3333','#ff8800','#ffcc00','#88cc00','#00ff41'][s] || '';
-});
+// ── iOS Audio Format Fix ──────────────────────────────────────────────────────
+function getSupportedAudioMime() {
+  const types = ['audio/mp4','audio/aac','audio/webm;codecs=opus','audio/webm','audio/ogg'];
+  for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
+  return '';
+}
+function getSupportedVideoMime() {
+  const types = ['video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+  for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
+  return '';
+}
 
-// ── PW Toggles ────────────────────────────────────────────────────────────────
-[['pw-input','pw-toggle'],['pw-join','pw-join-toggle']].forEach(([inp, btn]) => {
-  $(btn).addEventListener('click', () => {
-    const el = $(inp); el.type = el.type === 'password' ? 'text' : 'password';
-  });
+// ── Passwort-Stärke ───────────────────────────────────────────────────────────
+$('pw-input').addEventListener('input', function() {
+  const pw=this.value; let s=0;
+  if(pw.length>6)s++;if(pw.length>10)s++;if(/[A-Z]/.test(pw))s++;if(/[0-9]/.test(pw))s++;if(/[^a-zA-Z0-9]/.test(pw))s++;
+  const fill=$('pw-strength-fill'); fill.style.width=(s/5*100)+'%';
+  fill.style.background=['','#ff3333','#ff8800','#ffcc00','#88cc00','#00ff41'][s]||'';
+});
+[['pw-input','pw-toggle'],['pw-join','pw-join-toggle']].forEach(([inp,btn])=>{
+  $(btn).addEventListener('click',()=>{const el=$(inp);el.type=el.type==='password'?'text':'password';});
 });
 
 // ── Bild komprimieren ─────────────────────────────────────────────────────────
 async function compressImage(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        let { width: w, height: h } = img;
-        if (w > IMG_MAX_DIM || h > IMG_MAX_DIM) {
-          const r = Math.min(IMG_MAX_DIM / w, IMG_MAX_DIM / h);
-          w = Math.round(w * r); h = Math.round(h * r);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        let q = IMG_QUALITY;
-        const tryC = () => canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('fail')); return; }
-          if (blob.size <= MAX_IMG_BYTES || q < 0.3) {
-            const r2 = new FileReader();
-            r2.onload = ev => resolve({ dataUrl: ev.target.result, mime: blob.type, size: blob.size });
-            r2.readAsDataURL(blob);
-          } else { q -= 0.1; tryC(); }
-        }, 'image/jpeg', q);
+  return new Promise((resolve,reject) => {
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const img=new Image();
+      img.onload=()=>{
+        let{width:w,height:h}=img;
+        if(w>IMG_MAX_DIM||h>IMG_MAX_DIM){const r=Math.min(IMG_MAX_DIM/w,IMG_MAX_DIM/h);w=Math.round(w*r);h=Math.round(h*r);}
+        const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
+        canvas.getContext('2d').drawImage(img,0,0,w,h);
+        let q=IMG_QUALITY;
+        const tryC=()=>canvas.toBlob(blob=>{
+          if(!blob){reject(new Error('Komprimierung fehlgeschlagen'));return;}
+          if(blob.size<=MAX_IMG_BYTES||q<0.25){
+            const r2=new FileReader(); r2.onload=ev=>resolve({dataUrl:ev.target.result,mime:blob.type,size:blob.size}); r2.readAsDataURL(blob);
+          }else{q-=0.08;tryC();}
+        },'image/jpeg',q);
         tryC();
       };
-      img.onerror = reject; img.src = e.target.result;
+      img.onerror=reject; img.src=e.target.result;
     };
-    reader.onerror = reject; reader.readAsDataURL(file);
+    reader.onerror=reject; reader.readAsDataURL(file);
   });
 }
 
-// ── Sound & Vibration ─────────────────────────────────────────────────────────
+// ── Sound ─────────────────────────────────────────────────────────────────────
 function playPing() {
   try {
-    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-    const osc  = ctx.createOscillator(), gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.setValueAtTime(1100, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(550, ctx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc.start(); osc.stop(ctx.currentTime + 0.18);
-  } catch {}
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator(),gain=ctx.createGain();
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(1100,ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(550,ctx.currentTime+0.1);
+    gain.gain.setValueAtTime(0.1,ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.18);
+    osc.start();osc.stop(ctx.currentTime+0.18);
+  }catch{}
 }
-function vibrate() { try { navigator.vibrate?.(80); } catch {} }
+
+function playRingtone(active) {
+  try {
+    if (!active) { stopRingtone(); return; }
+    // Generierter Klingelton via Web Audio
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const ring=()=>{
+      const osc=ctx.createOscillator(),gain=ctx.createGain();
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(880,ctx.currentTime);
+      gain.gain.setValueAtTime(0.2,ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);
+      osc.start();osc.stop(ctx.currentTime+0.4);
+    };
+    ring(); window._ringInterval=setInterval(ring,1200);
+  }catch{}
+}
+function stopRingtone(){ clearInterval(window._ringInterval); }
+function vibrate(pattern=[80]){try{navigator.vibrate?.(pattern);}catch{}}
 
 // ── Tab Badge ─────────────────────────────────────────────────────────────────
-function bumpUnread() {
-  if (document.visibilityState === 'visible') return;
-  unread++; document.title = `(${unread}) ephemera`;
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { unread = 0; document.title = 'ephemera'; }
-});
+function bumpUnread(){if(document.visibilityState==='visible')return;unread++;document.title=`(${unread}) ephemera`;}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){unread=0;document.title='ephemera';}});
 
 // ── Countdown ─────────────────────────────────────────────────────────────────
 function startCountdown(createdAt) {
-  roomExpiry = createdAt + ROOM_LIFETIME;
-  $('countdown-wrap').style.display = 'flex';
-  const tick = () => {
-    const rem = roomExpiry - Date.now();
-    if (rem <= 0) { $('countdown').textContent = '0:00:00'; return; }
-    const h = Math.floor(rem / 3600000);
-    const m = Math.floor(rem % 3600000 / 60000);
-    const s = Math.floor(rem % 60000 / 1000);
-    $('countdown').textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-    const el = $('countdown'); el.className = 'countdown-val';
-    if (rem < 10 * 60000) el.classList.add('critical');
-    else if (rem < 30 * 60000) el.classList.add('warning');
+  roomExpiry=createdAt+ROOM_LIFETIME; $('countdown-wrap').style.display='flex';
+  const tick=()=>{
+    const rem=roomExpiry-Date.now();
+    if(rem<=0){$('countdown').textContent='0:00:00';return;}
+    const h=Math.floor(rem/3600000),m=Math.floor(rem%3600000/60000),s=Math.floor(rem%60000/1000);
+    $('countdown').textContent=`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    const el=$('countdown');el.className='countdown-val';
+    if(rem<10*60000)el.classList.add('critical');else if(rem<30*60000)el.classList.add('warning');
   };
-  tick(); countdownInterval = setInterval(tick, 1000);
+  tick();countdownInterval=setInterval(tick,1000);
 }
 
 // ── QR ────────────────────────────────────────────────────────────────────────
-function showQR(link) {
-  $('qr-canvas').innerHTML = '';
-  new QRCode($('qr-canvas'), {
-    text: link, width: 200, height: 200,
-    colorDark: '#00ff41', colorLight: '#0a0f0a',
-    correctLevel: QRCode.CorrectLevel.M
-  });
-  $('qr-overlay').style.display = 'flex';
+function showQR(link){
+  $('qr-canvas').innerHTML='';
+  new QRCode($('qr-canvas'),{text:link,width:200,height:200,colorDark:'#00ff41',colorLight:'#0a0f0a',correctLevel:QRCode.CorrectLevel.M});
+  $('qr-overlay').style.display='flex';
 }
-$('btn-qr-close').addEventListener('click', () => $('qr-overlay').style.display = 'none');
-$('btn-fs-close').addEventListener('click', () => $('media-fullscreen').style.display = 'none');
-
-function openFullscreen(type, src) {
-  $('fs-img').style.display = 'none'; $('fs-vid').style.display = 'none';
-  if (type === 'img') { $('fs-img').src = src; $('fs-img').style.display = 'block'; }
-  else { $('fs-vid').src = src; $('fs-vid').style.display = 'block'; }
-  $('media-fullscreen').style.display = 'flex';
+$('btn-qr-close').addEventListener('click',()=>$('qr-overlay').style.display='none');
+$('btn-fs-close').addEventListener('click',()=>$('media-fullscreen').style.display='none');
+function openFullscreen(type,src){
+  $('fs-img').style.display='none';$('fs-vid').style.display='none';
+  if(type==='img'){$('fs-img').src=src;$('fs-img').style.display='block';}
+  else{$('fs-vid').src=src;$('fs-vid').style.display='block';}
+  $('media-fullscreen').style.display='flex';
 }
 
-// ── Keepalive — aggressiv für Mobile ─────────────────────────────────────────
-function startKeepalive() {
-  clearInterval(keepaliveTimer);
-  keepaliveTimer = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
-  }, KEEPALIVE_MS);
+// ── Keepalive ─────────────────────────────────────────────────────────────────
+function startKeepalive(){clearInterval(keepaliveTimer);keepaliveTimer=setInterval(()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'ping'}));},KEEPALIVE_MS);}
+function stopKeepalive(){clearInterval(keepaliveTimer);}
+
+// ── Reconnect ─────────────────────────────────────────────────────────────────
+function scheduleReconnect(){
+  if(intentionalClose)return;
+  if(reconnectAttempts>=RECONNECT_DELAYS.length)reconnectAttempts=RECONNECT_DELAYS.length-1;
+  const delay=RECONNECT_DELAYS[reconnectAttempts++];
+  const b=$('reconnect-banner');b.className='visible';
+  b.textContent=`> VERBINDUNG GETRENNT — Wiederverbindung in ${Math.round(delay/1000)}s …`;
+  reconnectTimer=setTimeout(()=>{if(!intentionalClose&&roomId&&cryptoKey){b.textContent='> VERBINDE …';openWebSocket();}},delay);
 }
-function stopKeepalive() { clearInterval(keepaliveTimer); }
+function cancelReconnect(){clearTimeout(reconnectTimer);$('reconnect-banner').className='';}
 
-// ── Reconnect — stufenweise ───────────────────────────────────────────────────
-function scheduleReconnect() {
-  if (intentionalClose) return;
-  if (reconnectAttempts >= RECONNECT_DELAYS.length) {
-    // Alle Versuche durch — aber Raum lebt noch 2h, also weiter versuchen
-    reconnectAttempts = RECONNECT_DELAYS.length - 1;
-  }
-  const delay = RECONNECT_DELAYS[reconnectAttempts];
-  reconnectAttempts++;
-
-  const b = $('reconnect-banner'); b.className = 'visible';
-  b.textContent = `> VERBINDUNG GETRENNT — Wiederverbindung in ${Math.round(delay/1000)}s …`;
-
-  reconnectTimer = setTimeout(() => {
-    if (!intentionalClose && roomId && cryptoKey) {
-      b.textContent = '> VERBINDUNG WIRD HERGESTELLT …';
-      openWebSocket();
-    }
-  }, delay);
-}
-
-function cancelReconnect() {
-  clearTimeout(reconnectTimer);
-  $('reconnect-banner').className = '';
-}
-
-// Sofort reconnecten wenn Tab wieder aktiv — wichtigster Fix für Mobile
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && roomId && cryptoKey && !intentionalClose) {
-    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-      cancelReconnect();
-      reconnectAttempts = 0;
-      openWebSocket();
-    }
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&roomId&&cryptoKey&&!intentionalClose){
+    if(!ws||ws.readyState===WebSocket.CLOSED||ws.readyState===WebSocket.CLOSING){cancelReconnect();reconnectAttempts=0;openWebSocket();}
   }
 });
-
-// Auch beim Online-Event reconnecten (Netzwechsel)
-window.addEventListener('online', () => {
-  if (roomId && cryptoKey && !intentionalClose) {
-    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-      cancelReconnect(); reconnectAttempts = 0; openWebSocket();
-    }
-  }
+window.addEventListener('online',()=>{
+  if(roomId&&cryptoKey&&!intentionalClose&&(!ws||ws.readyState===WebSocket.CLOSED)){cancelReconnect();reconnectAttempts=0;openWebSocket();}
 });
 
 // ── Drag & Drop ───────────────────────────────────────────────────────────────
-const dropOverlay = $('drop-overlay');
-dropOverlay.textContent = '> DATEI HIER ABLEGEN';
-document.addEventListener('dragover', e => { e.preventDefault(); dropOverlay.classList.add('visible'); });
-document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOverlay.classList.remove('visible'); });
-document.addEventListener('drop', async e => {
-  e.preventDefault(); dropOverlay.classList.remove('visible');
-  for (const file of [...(e.dataTransfer?.files || [])]) await handleFileOrImage(file);
-});
+const dropOverlay=$('drop-overlay');
+dropOverlay.textContent='> DATEI HIER ABLEGEN';
+document.addEventListener('dragover',e=>{e.preventDefault();dropOverlay.classList.add('visible');});
+document.addEventListener('dragleave',e=>{if(!e.relatedTarget)dropOverlay.classList.remove('visible');});
+document.addEventListener('drop',async e=>{e.preventDefault();dropOverlay.classList.remove('visible');for(const f of[...(e.dataTransfer?.files||[])])await handleFileOrImage(f);});
 
 // ── Scroll ────────────────────────────────────────────────────────────────────
-function scrollMsgs() {
-  const wrap = $('messages-wrap');
-  if (wrap) wrap.scrollTop = wrap.scrollHeight;
-}
+function scrollMsgs(){const w=$('messages-wrap');if(w)w.scrollTop=w.scrollHeight;}
 
 // ── Partner Banner ────────────────────────────────────────────────────────────
-function setPartnerBanner(state) {
-  let b = $('partner-banner');
-  if (!b) {
-    b = document.createElement('div');
-    b.id = 'partner-banner';
-    $('messages').insertBefore(b, $('messages').firstChild);
-  }
-  b.className = `partner-banner ${state}`;
-  b.style.display = state === 'hidden' ? 'none' : 'block';
-  b.textContent = state === 'online'
-    ? '> GESPRÄCHSPARTNER ONLINE'
-    : '> GESPRÄCHSPARTNER OFFLINE';
+function setPartnerBanner(state){
+  let b=$('partner-banner');
+  if(!b){b=document.createElement('div');b.id='partner-banner';$('messages').insertBefore(b,$('messages').firstChild);}
+  b.className=`partner-banner ${state}`;b.style.display=state==='hidden'?'none':'block';
+  b.textContent=state==='online'?'> GESPRÄCHSPARTNER ONLINE':'> GESPRÄCHSPARTNER OFFLINE';
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
-function setStatus(state, text) {
-  const c = $('status-cursor'); c.className = 'cursor-blink ' + state;
-  $('status-text').textContent = text;
+function setStatus(state,text){$('status-cursor').className='cursor-blink '+state;$('status-text').textContent=text;}
+function enableInput(yes){$('msg-input').disabled=!yes;$('btn-send').disabled=!yes;if(yes)$('msg-input').focus();}
+
+// ── Emoji Picker ──────────────────────────────────────────────────────────────
+function showEmojiPicker(msgId,anchor){
+  const picker=$('emoji-picker'),list=$('emoji-list');list.innerHTML='';
+  REACTIONS.forEach(emoji=>{
+    const btn=document.createElement('button');btn.className='emoji-opt';btn.textContent=emoji;
+    btn.addEventListener('click',()=>{sendReaction(msgId,emoji);picker.style.display='none';});list.appendChild(btn);
+  });
+  const rect=anchor.getBoundingClientRect();
+  picker.style.bottom=(window.innerHeight-rect.top+4)+'px';
+  picker.style.left=Math.max(4,Math.min(rect.left,window.innerWidth-210))+'px';
+  picker.style.top='auto';picker.style.display='block';
 }
-function enableInput(yes) {
-  $('msg-input').disabled  = !yes;
-  $('btn-send').disabled   = !yes;
-  if (yes) $('msg-input').focus();
-}
+document.addEventListener('click',e=>{if(!$('emoji-picker').contains(e.target))$('emoji-picker').style.display='none';});
 
 // ── Neue Nachrichten Trennlinie ───────────────────────────────────────────────
-function insertNewMsgDivider() {
-  if (hasShownNewMsgDivider) return;
-  hasShownNewMsgDivider = true;
-  const div = document.createElement('div');
-  div.className = 'new-msg-divider msg system';
-  div.textContent = 'NEUE NACHRICHTEN';
+function insertNewMsgDivider(){
+  if(hasShownNewMsgDivider)return;hasShownNewMsgDivider=true;
+  const div=document.createElement('div');div.className='new-msg-divider msg system';div.textContent='NEUE NACHRICHTEN';
   $('messages').appendChild(div);
 }
 
-// ── Emoji Picker ──────────────────────────────────────────────────────────────
-function showEmojiPicker(msgId, anchor) {
-  const picker = $('emoji-picker'), list = $('emoji-list');
-  list.innerHTML = '';
-  REACTIONS.forEach(emoji => {
-    const btn = document.createElement('button');
-    btn.className = 'emoji-opt'; btn.textContent = emoji;
-    btn.addEventListener('click', () => { sendReaction(msgId, emoji); picker.style.display = 'none'; });
-    list.appendChild(btn);
-  });
-  const rect = anchor.getBoundingClientRect();
-  picker.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
-  picker.style.left   = Math.max(4, Math.min(rect.left, window.innerWidth - 210)) + 'px';
-  picker.style.top    = 'auto';
-  picker.style.display = 'block';
-}
-document.addEventListener('click', e => {
-  if (!$('emoji-picker').contains(e.target)) $('emoji-picker').style.display = 'none';
-});
-
 // ── Nachricht bauen ───────────────────────────────────────────────────────────
-function newMsgId() {
-  return crypto.randomUUID
-    ? crypto.randomUUID()
-    : Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
-function fmtTime(ts) {
-  const d = new Date(ts || Date.now());
-  return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+function newMsgId(){return crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);}
+function fmtTime(ts){const d=new Date(ts||Date.now());return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');}
+
+function buildBubble(role,id){
+  const wrap=document.createElement('div');wrap.className=`msg ${role}`;if(id)wrap.dataset.id=id;
+  const actions=document.createElement('div');actions.className='msg-actions';
+  const replyBtn=document.createElement('button');replyBtn.className='msg-action-btn';replyBtn.textContent='↩';
+  replyBtn.addEventListener('click',()=>startReply(id,wrap));actions.appendChild(replyBtn);
+  const reactBtn=document.createElement('button');reactBtn.className='msg-action-btn';reactBtn.textContent='😊';
+  reactBtn.addEventListener('click',e=>{e.stopPropagation();showEmojiPicker(id,reactBtn);});actions.appendChild(reactBtn);
+  wrap.appendChild(actions);return wrap;
 }
 
-function buildBubble(role, id) {
-  const wrap = document.createElement('div');
-  wrap.className = `msg ${role}`;
-  if (id) wrap.dataset.id = id;
-  // Aktions-Buttons (Reply + Reaktion)
-  const actions  = document.createElement('div'); actions.className = 'msg-actions';
-  const replyBtn = document.createElement('button'); replyBtn.className = 'msg-action-btn'; replyBtn.textContent = '↩';
-  replyBtn.addEventListener('click', () => startReply(id, wrap)); actions.appendChild(replyBtn);
-  const reactBtn = document.createElement('button'); reactBtn.className = 'msg-action-btn'; reactBtn.textContent = '😊';
-  reactBtn.addEventListener('click', e => { e.stopPropagation(); showEmojiPicker(id, reactBtn); }); actions.appendChild(reactBtn);
-  wrap.appendChild(actions);
-  return wrap;
-}
-
-function addMeta(wrap, role, id, ts, isPending) {
-  const meta   = document.createElement('div'); meta.className = 'msg-meta';
-  const time   = document.createElement('span'); time.className = 'msg-time'; time.textContent = fmtTime(ts); meta.appendChild(time);
-  if (role === 'self' && id) {
-    const readEl = document.createElement('span');
-    readEl.className   = isPending ? 'read-status read-pending' : 'read-status';
-    readEl.textContent = isPending ? '⏳' : '✓';
-    meta.appendChild(readEl);
-    myMsgs.set(id, { el: wrap, readEl });
-    const ret = document.createElement('button'); ret.className = 'btn-retract'; ret.textContent = 'zurückziehen';
-    ret.addEventListener('click', () => retractMessage(id)); meta.appendChild(ret);
-    const editBtn = document.createElement('button'); editBtn.className = 'btn-edit'; editBtn.textContent = '✎';
-    editBtn.addEventListener('click', () => { const t = wrap.querySelector('.msg-text'); if (t) startEdit(id, t.textContent); });
-    meta.appendChild(editBtn);
+function addMeta(wrap,role,id,ts,isPending){
+  const meta=document.createElement('div');meta.className='msg-meta';
+  const time=document.createElement('span');time.className='msg-time';time.textContent=fmtTime(ts);meta.appendChild(time);
+  if(role==='self'&&id){
+    const readEl=document.createElement('span');
+    readEl.className=isPending?'read-status read-pending':'read-status';
+    readEl.textContent=isPending?'⏳':'✓';meta.appendChild(readEl);
+    myMsgs.set(id,{el:wrap,readEl});
+    const ret=document.createElement('button');ret.className='btn-retract';ret.textContent='zurückziehen';
+    ret.addEventListener('click',()=>retractMessage(id));meta.appendChild(ret);
+    const editBtn=document.createElement('button');editBtn.className='btn-edit';editBtn.textContent='✎';
+    editBtn.addEventListener('click',()=>{const t=wrap.querySelector('.msg-text');if(t)startEdit(id,t.textContent);});meta.appendChild(editBtn);
   }
-  const reacDiv = document.createElement('div'); reacDiv.className = 'msg-reactions'; reacDiv.id = `reactions-${id}`;
-  wrap.appendChild(meta); wrap.appendChild(reacDiv);
-  return meta;
+  const reacDiv=document.createElement('div');reacDiv.className='msg-reactions';reacDiv.id=`reactions-${id}`;
+  wrap.appendChild(meta);wrap.appendChild(reacDiv);return meta;
 }
 
-function addTextMessage(text, role, id, ts, isPending, quoteId, quoteText, edited) {
-  const wrap = buildBubble(role, id);
-  if (quoteText) {
-    const q = document.createElement('div'); q.className = 'msg-quote';
-    q.textContent = quoteText.slice(0, 80) + (quoteText.length > 80 ? '…' : '');
-    wrap.appendChild(q);
-  }
-  const body = document.createElement('div'); body.className = 'msg-body';
-  const t    = document.createElement('span'); t.className = 'msg-text'; t.textContent = text;
-  body.appendChild(t); wrap.appendChild(body);
-  const meta = addMeta(wrap, role, id, ts, isPending);
-  if (edited) {
-    const ed = document.createElement('span'); ed.className = 'edited-label'; ed.textContent = '(bearbeitet)'; meta.prepend(ed);
-  }
-  $('messages').appendChild(wrap); scrollMsgs();
-  if (role === 'other' && id && ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'read', id }));
+function addTextMessage(text,role,id,ts,isPending,quoteId,quoteText,edited){
+  const wrap=buildBubble(role,id);
+  if(quoteText){const q=document.createElement('div');q.className='msg-quote';q.textContent=quoteText.slice(0,80)+(quoteText.length>80?'…':'');wrap.appendChild(q);}
+  const body=document.createElement('div');body.className='msg-body';
+  const t=document.createElement('span');t.className='msg-text';t.textContent=text;body.appendChild(t);wrap.appendChild(body);
+  const meta=addMeta(wrap,role,id,ts,isPending);
+  if(edited){const ed=document.createElement('span');ed.className='edited-label';ed.textContent='(bearbeitet)';meta.prepend(ed);}
+  $('messages').appendChild(wrap);scrollMsgs();
+  if(role==='other'&&id&&ws?.readyState===1)ws.send(JSON.stringify({type:'read',id}));
   return wrap;
 }
 
-function addImageMessage(dataUrl, role, id, ts, isPending) {
-  const wrap = buildBubble(role, id);
-  const img  = document.createElement('img'); img.className = 'msg-img'; img.src = dataUrl; img.alt = 'Bild';
-  img.addEventListener('click', () => openFullscreen('img', dataUrl)); wrap.appendChild(img);
-  addMeta(wrap, role, id, ts, isPending);
-  $('messages').appendChild(wrap); scrollMsgs();
-  if (role === 'other' && id && ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'read', id }));
+function addImageMessage(dataUrl,role,id,ts,isPending){
+  const wrap=buildBubble(role,id);
+  const img=document.createElement('img');img.className='msg-img';img.src=dataUrl;img.alt='Bild';
+  img.addEventListener('click',()=>openFullscreen('img',dataUrl));wrap.appendChild(img);
+  addMeta(wrap,role,id,ts,isPending);$('messages').appendChild(wrap);scrollMsgs();
+  if(role==='other'&&id&&ws?.readyState===1)ws.send(JSON.stringify({type:'read',id}));
   return wrap;
 }
 
-function addVideoMessage(dataUrl, role, id, ts, isPending) {
-  const wrap = buildBubble(role, id);
-  const vid  = document.createElement('video'); vid.className = 'msg-vid'; vid.src = dataUrl; vid.controls = true; vid.preload = 'metadata';
-  vid.addEventListener('dblclick', () => openFullscreen('vid', dataUrl)); wrap.appendChild(vid);
-  addMeta(wrap, role, id, ts, isPending);
-  $('messages').appendChild(wrap); scrollMsgs();
-  if (role === 'other' && id && ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'read', id }));
+function addVideoMessage(dataUrl,role,id,ts,isPending){
+  const wrap=buildBubble(role,id);
+  const vid=document.createElement('video');vid.className='msg-vid';vid.src=dataUrl;vid.controls=true;vid.preload='metadata';
+  vid.addEventListener('dblclick',()=>openFullscreen('vid',dataUrl));wrap.appendChild(vid);
+  addMeta(wrap,role,id,ts,isPending);$('messages').appendChild(wrap);scrollMsgs();
+  if(role==='other'&&id&&ws?.readyState===1)ws.send(JSON.stringify({type:'read',id}));
   return wrap;
 }
 
-function addAudioMessage(dataUrl, role, id, ts, isPending) {
-  const wrap = buildBubble(role, id);
-  const div  = document.createElement('div'); div.className = 'msg-audio';
-  const lbl  = document.createElement('div'); lbl.className = 'audio-label'; lbl.textContent = '> SPRACHNACHRICHT';
-  const aud  = document.createElement('audio'); aud.controls = true; aud.src = dataUrl; aud.preload = 'metadata';
-  div.appendChild(lbl); div.appendChild(aud); wrap.appendChild(div);
-  addMeta(wrap, role, id, ts, isPending);
-  $('messages').appendChild(wrap); scrollMsgs();
-  if (role === 'other' && id && ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'read', id }));
+function addAudioMessage(dataUrl,role,id,ts,isPending){
+  const wrap=buildBubble(role,id);
+  const div=document.createElement('div');div.className='msg-audio';
+  const lbl=document.createElement('div');lbl.className='audio-label';lbl.textContent='> SPRACHNACHRICHT';
+  const aud=document.createElement('audio');aud.controls=true;aud.src=dataUrl;aud.preload='metadata';
+  div.appendChild(lbl);div.appendChild(aud);wrap.appendChild(div);
+  addMeta(wrap,role,id,ts,isPending);$('messages').appendChild(wrap);scrollMsgs();
+  if(role==='other'&&id&&ws?.readyState===1)ws.send(JSON.stringify({type:'read',id}));
   return wrap;
 }
 
-function addFileMessage(dataUrl, filename, filesize, role, id, ts, isPending) {
-  const wrap = buildBubble(role, id);
-  const div  = document.createElement('div'); div.className = 'msg-file';
-  const icon = document.createElement('div'); icon.className = 'file-icon'; icon.textContent = '📄';
-  const info = document.createElement('div'); info.className = 'file-info';
-  const name = document.createElement('div'); name.className = 'file-name'; name.textContent = filename;
-  const size = document.createElement('div'); size.className = 'file-size'; size.textContent = Math.round(filesize / 1024) + ' KB';
-  info.appendChild(name); info.appendChild(size);
-  const dl = document.createElement('a'); dl.href = dataUrl; dl.download = filename; dl.className = 'btn btn-ghost btn-dl'; dl.textContent = '↓';
-  div.appendChild(icon); div.appendChild(info); div.appendChild(dl); wrap.appendChild(div);
-  addMeta(wrap, role, id, ts, isPending);
-  $('messages').appendChild(wrap); scrollMsgs();
-  if (role === 'other' && id && ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'read', id }));
+function addFileMessage(dataUrl,filename,filesize,role,id,ts,isPending){
+  const wrap=buildBubble(role,id);
+  const div=document.createElement('div');div.className='msg-file';
+  const icon=document.createElement('div');icon.className='file-icon';icon.textContent='📄';
+  const info=document.createElement('div');info.className='file-info';
+  const name=document.createElement('div');name.className='file-name';name.textContent=filename;
+  const size=document.createElement('div');size.className='file-size';size.textContent=Math.round(filesize/1024)+' KB';
+  info.appendChild(name);info.appendChild(size);
+  const dl=document.createElement('a');dl.href=dataUrl;dl.download=filename;dl.className='btn btn-ghost btn-dl';dl.textContent='↓';
+  div.appendChild(icon);div.appendChild(info);div.appendChild(dl);wrap.appendChild(div);
+  addMeta(wrap,role,id,ts,isPending);$('messages').appendChild(wrap);scrollMsgs();
+  if(role==='other'&&id&&ws?.readyState===1)ws.send(JSON.stringify({type:'read',id}));
   return wrap;
 }
 
-function addSystem(text) {
-  const el = document.createElement('div'); el.className = 'msg system'; el.textContent = '// ' + text;
-  $('messages').appendChild(el); scrollMsgs();
+function addSystem(text){
+  const el=document.createElement('div');el.className='msg system';el.textContent='// '+text;
+  $('messages').appendChild(el);scrollMsgs();
 }
 
-function markDelivered(id) {
-  const e = myMsgs.get(id);
-  if (e && e.readEl.textContent === '⏳') { e.readEl.textContent = '✓'; e.readEl.className = 'read-status'; }
+function markDelivered(id){
+  const e=myMsgs.get(id);
+  if(e&&e.readEl.textContent==='⏳'){e.readEl.textContent='✓';e.readEl.className='read-status';}
 }
 
 // ── Selbstlösch ───────────────────────────────────────────────────────────────
-function scheduleSelfDestruct(id, seconds) {
-  const el = $('messages').querySelector(`[data-id="${CSS.escape(id)}"]`); if (!el) return;
-  let rem = seconds;
-  const sdSpan = document.createElement('span'); sdSpan.className = 'sd-countdown'; sdSpan.textContent = `⏱${rem}s`;
+function scheduleSelfDestruct(id,seconds){
+  const el=$('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);if(!el)return;
+  let rem=seconds;
+  const sdSpan=document.createElement('span');sdSpan.className='sd-countdown';sdSpan.textContent=`⏱${rem}s`;
   el.querySelector('.msg-meta')?.appendChild(sdSpan);
-  const t = setInterval(() => {
-    rem--; sdSpan.textContent = `⏱${rem}s`;
-    if (rem <= 0) {
-      clearInterval(t); sdTimers.delete(id);
-      el.classList.add('retracted');
-      ['msg-body','msg-img','msg-audio','msg-vid','msg-file'].forEach(cls => el.querySelector('.'+cls)?.remove());
-      const ph = document.createElement('div'); ph.className = 'msg-body'; ph.textContent = '[Nachricht gelöscht]';
-      el.insertBefore(ph, el.querySelector('.msg-meta'));
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'self_destruct_ack', id }));
+  const t=setInterval(()=>{
+    rem--;sdSpan.textContent=`⏱${rem}s`;
+    if(rem<=0){
+      clearInterval(t);sdTimers.delete(id);el.classList.add('retracted');
+      ['msg-body','msg-img','msg-audio','msg-vid','msg-file'].forEach(cls=>el.querySelector('.'+cls)?.remove());
+      const ph=document.createElement('div');ph.className='msg-body';ph.textContent='[Nachricht gelöscht]';
+      el.insertBefore(ph,el.querySelector('.msg-meta'));
+      if(ws?.readyState===1)ws.send(JSON.stringify({type:'self_destruct_ack',id}));
     }
-  }, 1000);
-  sdTimers.set(id, t);
+  },1000);
+  sdTimers.set(id,t);
 }
 
 // ── Reaktionen ────────────────────────────────────────────────────────────────
-function sendReaction(msgId, emoji) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'reaction', id: newMsgId(), msgId, emoji }));
-  applyReaction(msgId, emoji, true);
-}
-function applyReaction(msgId, emoji, isMine) {
-  const c = document.getElementById(`reactions-${msgId}`); if (!c) return;
-  let found = null;
-  for (const b of c.querySelectorAll('.reaction-badge')) if (b.dataset.emoji === emoji) { found = b; break; }
-  if (found) {
-    const cnt = parseInt(found.dataset.count || 1) + 1;
-    found.dataset.count = cnt; found.textContent = emoji + (cnt > 1 ? ` ${cnt}` : '');
-    if (isMine) found.classList.add('mine');
-  } else {
-    const b = document.createElement('button');
-    b.className = 'reaction-badge' + (isMine ? ' mine' : '');
-    b.dataset.emoji = emoji; b.dataset.count = 1; b.textContent = emoji;
-    c.appendChild(b);
-  }
+function sendReaction(msgId,emoji){if(!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'reaction',id:newMsgId(),msgId,emoji}));applyReaction(msgId,emoji,true);}
+function applyReaction(msgId,emoji,isMine){
+  const c=document.getElementById(`reactions-${msgId}`);if(!c)return;
+  let found=null;for(const b of c.querySelectorAll('.reaction-badge'))if(b.dataset.emoji===emoji){found=b;break;}
+  if(found){const cnt=parseInt(found.dataset.count||1)+1;found.dataset.count=cnt;found.textContent=emoji+(cnt>1?` ${cnt}`:'');if(isMine)found.classList.add('mine');}
+  else{const b=document.createElement('button');b.className='reaction-badge'+(isMine?' mine':'');b.dataset.emoji=emoji;b.dataset.count=1;b.textContent=emoji;c.appendChild(b);}
 }
 
-// ── Reply ─────────────────────────────────────────────────────────────────────
-function startReply(id, el) {
-  replyToId = id;
-  const t = el.querySelector('.msg-text'); replyToText = t ? t.textContent : '[Medien]';
-  $('reply-preview').style.display = 'block';
-  $('reply-preview-text').textContent = replyToText.slice(0, 80);
-  $('msg-input').focus();
-}
-$('btn-reply-cancel').addEventListener('click', () => {
-  replyToId = null; replyToText = null; $('reply-preview').style.display = 'none';
-});
-
-// ── Bearbeiten ────────────────────────────────────────────────────────────────
-function startEdit(id, currentText) {
-  editingId = id;
-  $('edit-bar').style.display = 'block';
-  $('msg-input').value = currentText; $('msg-input').focus();
-  setTimeout(() => { if (editingId === id) { editingId = null; $('edit-bar').style.display = 'none'; } }, EDIT_WINDOW_MS);
-}
-$('btn-edit-cancel').addEventListener('click', () => {
-  editingId = null; $('edit-bar').style.display = 'none'; $('msg-input').value = '';
-});
-
-// ── Zurückziehen ──────────────────────────────────────────────────────────────
-function retractMessage(id) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'retract', id })); applyRetract(id);
-}
-function applyRetract(id) {
-  const own = myMsgs.get(id);
-  if (own) { applyRetractEl(own.el); myMsgs.delete(id); return; }
-  const el = $('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);
-  if (el) applyRetractEl(el);
-}
-function applyRetractEl(el) {
-  el.classList.add('retracted');
-  ['msg-body','msg-img','msg-audio','msg-vid','msg-file','msg-quote'].forEach(cls => el.querySelector('.'+cls)?.remove());
-  const ph = document.createElement('div'); ph.className = 'msg-body'; ph.textContent = '[zurückgezogen]';
-  el.insertBefore(ph, el.querySelector('.msg-meta'));
-  el.querySelector('.msg-meta')?.remove();
-}
+// ── Reply & Edit & Retract ────────────────────────────────────────────────────
+function startReply(id,el){replyToId=id;const t=el.querySelector('.msg-text');replyToText=t?t.textContent:'[Medien]';$('reply-preview').style.display='block';$('reply-preview-text').textContent=replyToText.slice(0,80);$('msg-input').focus();}
+$('btn-reply-cancel').addEventListener('click',()=>{replyToId=null;replyToText=null;$('reply-preview').style.display='none';});
+function startEdit(id,text){editingId=id;$('edit-bar').style.display='block';$('msg-input').value=text;$('msg-input').focus();setTimeout(()=>{if(editingId===id){editingId=null;$('edit-bar').style.display='none';}},EDIT_WINDOW_MS);}
+$('btn-edit-cancel').addEventListener('click',()=>{editingId=null;$('edit-bar').style.display='none';$('msg-input').value='';});
+function retractMessage(id){if(!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'retract',id}));applyRetract(id);}
+function applyRetract(id){const own=myMsgs.get(id);if(own){applyRetractEl(own.el);myMsgs.delete(id);return;}const el=$('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);if(el)applyRetractEl(el);}
+function applyRetractEl(el){el.classList.add('retracted');['msg-body','msg-img','msg-audio','msg-vid','msg-file','msg-quote'].forEach(cls=>el.querySelector('.'+cls)?.remove());const ph=document.createElement('div');ph.className='msg-body';ph.textContent='[zurückgezogen]';el.insertBefore(ph,el.querySelector('.msg-meta'));el.querySelector('.msg-meta')?.remove();}
 
 // ── Typing ────────────────────────────────────────────────────────────────────
-function sendTyping(active) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (active === typingActive) return;
-  typingActive = active; ws.send(JSON.stringify({ type: 'typing', active }));
-}
-$('msg-input').addEventListener('input', function() {
-  this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-  sendTyping(true); clearTimeout(typingTimer); typingTimer = setTimeout(() => sendTyping(false), 2000);
-});
+function sendTyping(active){if(!ws||ws.readyState!==1)return;if(active===typingActive)return;typingActive=active;ws.send(JSON.stringify({type:'typing',active}));}
+$('msg-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';sendTyping(true);clearTimeout(typingTimer);typingTimer=setTimeout(()=>sendTyping(false),2000);});
 
 // ── Schriftgröße ──────────────────────────────────────────────────────────────
-function applyFontSize(s) {
-  fontSize = Math.min(22, Math.max(12, s));
-  $('messages').style.fontSize = fontSize + 'px'; $('msg-input').style.fontSize = fontSize + 'px';
-  $('font-size-label').textContent = fontSize + 'px';
+function applyFontSize(s){fontSize=Math.min(22,Math.max(12,s));$('messages').style.fontSize=fontSize+'px';$('msg-input').style.fontSize=fontSize+'px';$('font-size-label').textContent=fontSize+'px';}
+$('font-up').addEventListener('click',()=>applyFontSize(fontSize+1));
+$('font-down').addEventListener('click',()=>applyFontSize(fontSize-1));
+
+// ── SD Toggle & Verlängern ────────────────────────────────────────────────────
+$('btn-sd-toggle').addEventListener('click',()=>{sdTextEnabled=!sdTextEnabled;$('btn-sd-toggle').classList.toggle('active',sdTextEnabled);$('sd-compose-row').style.display=sdTextEnabled?'flex':'none';});
+$('btn-extend').addEventListener('click',()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'extend'}));});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WebRTC ANRUF
+// ══════════════════════════════════════════════════════════════════════════════
+async function getIceServers(){
+  if(iceServers)return iceServers;
+  try{const r=await fetch('/api/turn');iceServers=(await r.json()).iceServers;}
+  catch{iceServers=[{urls:'stun:stun.l.google.com:19302'}];}
+  return iceServers;
 }
-$('font-up').addEventListener('click', () => applyFontSize(fontSize + 1));
-$('font-down').addEventListener('click', () => applyFontSize(fontSize - 1));
 
-// ── SD Toggle ─────────────────────────────────────────────────────────────────
-$('btn-sd-toggle').addEventListener('click', () => {
-  sdTextEnabled = !sdTextEnabled;
-  $('btn-sd-toggle').classList.toggle('active', sdTextEnabled);
-  $('sd-compose-row').style.display = sdTextEnabled ? 'flex' : 'none';
+async function startCall(){
+  if(!partnerConnected){addSystem('Partner muss erst online sein um anzurufen.');return;}
+  if(peerConn){addSystem('Bereits in einem Anruf.');return;}
+  try{
+    localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    peerConn=await createPeerConnection();
+    localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
+    const offer=await peerConn.createOffer();
+    await peerConn.setLocalDescription(offer);
+    ws.send(JSON.stringify({type:'webrtc_call'})); // Partner informieren
+    ws.send(JSON.stringify({type:'webrtc_offer',sdp:peerConn.localDescription}));
+    showCallBar('Rufe an…');
+    addSystem('📞 Anruf gestartet…');
+  }catch(e){
+    addSystem('[Mikrofonzugriff verweigert oder Fehler: '+e.message+']');
+    cleanupCall();
+  }
+}
+
+async function answerCall(){
+  $('call-incoming').style.display='none';
+  try{
+    localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    peerConn=await createPeerConnection();
+    localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
+    // Warte auf gespeichertes Angebot
+    if(window._pendingOffer){
+      await peerConn.setRemoteDescription(new RTCSessionDescription(window._pendingOffer));
+      const answer=await peerConn.createAnswer();
+      await peerConn.setLocalDescription(answer);
+      ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+      window._pendingOffer=null;
+    }
+    showCallBar('Verbinde…');
+    stopRingtone();
+  }catch(e){
+    addSystem('[Fehler beim Annehmen: '+e.message+']');
+    cleanupCall();
+  }
+}
+
+async function createPeerConnection(){
+  const servers=await getIceServers();
+  const pc=new RTCPeerConnection({iceServers:servers});
+  pc.onicecandidate=e=>{
+    if(e.candidate&&ws?.readyState===1)
+      ws.send(JSON.stringify({type:'webrtc_ice',candidate:e.candidate}));
+  };
+  pc.ontrack=e=>{
+    const remoteAudio=$('remote-audio');
+    if(remoteAudio){remoteAudio.srcObject=e.streams[0];remoteAudio.play().catch(()=>{});}
+  };
+  pc.onconnectionstatechange=()=>{
+    if(pc.connectionState==='connected'){
+      showCallBar('Verbunden');
+      $('call-status-dot').classList.add('active');
+      startCallTimer();
+      addSystem('📞 Anruf verbunden.');
+    }else if(['disconnected','failed','closed'].includes(pc.connectionState)){
+      addSystem('📵 Anruf beendet.');
+      cleanupCall();
+    }
+  };
+  return pc;
+}
+
+function showCallBar(statusText){
+  $('call-bar').style.display='flex';
+  $('call-status-text').textContent=statusText;
+  $('call-incoming').style.display='none';
+}
+
+function startCallTimer(){
+  callSeconds=0;$('call-timer').style.display='inline';
+  callTimer=setInterval(()=>{
+    callSeconds++;
+    const m=Math.floor(callSeconds/60),s=callSeconds%60;
+    $('call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;
+  },1000);
+}
+
+function hangup(){
+  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
+  cleanupCall();
+  addSystem('📵 Anruf beendet.');
+}
+
+function cleanupCall(){
+  clearInterval(callTimer);callSeconds=0;
+  stopRingtone();
+  if(localStream)localStream.getTracks().forEach(t=>t.stop());localStream=null;
+  if(peerConn)peerConn.close();peerConn=null;
+  $('call-bar').style.display='none';
+  $('call-incoming').style.display='none';
+  $('call-timer').style.display='none';
+  $('call-status-dot').classList.remove('active');
+  $('btn-mute').textContent='🎤';isMuted=false;
+  const ra=$('remote-audio');if(ra){ra.srcObject=null;}
+}
+
+// Anruf-Buttons
+$('btn-call').addEventListener('click',startCall);
+$('btn-hangup').addEventListener('click',hangup);
+$('btn-accept').addEventListener('click',answerCall);
+$('btn-reject').addEventListener('click',()=>{
+  $('call-incoming').style.display='none';
+  stopRingtone();
+  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
+  addSystem('Anruf abgelehnt.');
+});
+$('btn-mute').addEventListener('click',()=>{
+  if(!localStream)return;
+  isMuted=!isMuted;
+  localStream.getAudioTracks().forEach(t=>t.enabled=!isMuted);
+  $('btn-mute').textContent=isMuted?'🔇':'🎤';
+  $('btn-mute').classList.toggle('muted',isMuted);
+});
+$('btn-speaker').addEventListener('click',()=>{
+  const ra=$('remote-audio');if(!ra)return;
+  ra.muted=!ra.muted;
+  $('btn-speaker').textContent=ra.muted?'🔈':'🔊';
 });
 
-// ── Verlängern ────────────────────────────────────────────────────────────────
-$('btn-extend').addEventListener('click', () => {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'extend' }));
-});
-
-// ── Medien ────────────────────────────────────────────────────────────────────
-async function handleFileOrImage(file) {
-  if (!file || !ws || ws.readyState !== WebSocket.OPEN) return;
-  const isImage = file.type.startsWith('image/');
-  const isVideo = file.type.startsWith('video/');
-  if (isImage) {
-    addSystem('Bild wird komprimiert …');
-    try {
-      const { dataUrl, mime, size } = await compressImage(file);
-      addSystem(`Bild bereit (${Math.round(size/1024)} KB)`);
-      pendingMediaData = dataUrl; pendingMediaMime = mime; pendingMediaType = 'image';
-      $('img-preview').src = dataUrl; $('img-preview').style.display = 'block';
-      $('vid-preview').style.display = 'none';
-      $('media-preview-overlay').style.display = 'flex';
-    } catch { addSystem('[Bild konnte nicht verarbeitet werden]'); }
-  } else if (isVideo) {
-    if (file.size > MAX_FILE_BYTES * 5) { addSystem('[Video zu groß — max. 50MB]'); return; }
-    const reader = new FileReader();
-    reader.onload = e => {
-      pendingMediaData = e.target.result; pendingMediaMime = file.type; pendingMediaType = 'video';
-      $('vid-preview').src = e.target.result; $('vid-preview').style.display = 'block';
-      $('img-preview').style.display = 'none';
-      $('media-preview-overlay').style.display = 'flex';
+// ══════════════════════════════════════════════════════════════════════════════
+// MEDIEN SENDEN
+// ══════════════════════════════════════════════════════════════════════════════
+async function handleFileOrImage(file){
+  if(!file||!ws||ws.readyState!==1){addSystem('[Nicht verbunden — bitte warten]');return;}
+  const isImage=file.type.startsWith('image/'),isVideo=file.type.startsWith('video/');
+  if(isImage){
+    addSystem('Bild wird verarbeitet …');
+    try{
+      const{dataUrl,mime,size}=await compressImage(file);
+      if(size>MAX_IMG_BYTES){addSystem(`[Bild zu groß nach Komprimierung: ${Math.round(size/1024)}KB — bitte kleineres Bild wählen]`);return;}
+      addSystem(`Bild bereit (${Math.round(size/1024)} KB) — wird gesendet…`);
+      pendingMediaData=dataUrl;pendingMediaMime=mime;pendingMediaType='image';
+      $('img-preview').src=dataUrl;$('img-preview').style.display='block';
+      $('vid-preview').style.display='none';$('media-preview-overlay').style.display='flex';
+    }catch(e){addSystem('[Bild konnte nicht verarbeitet werden: '+e.message+']');}
+  }else if(isVideo){
+    if(file.size>MAX_FILE_BYTES*5){addSystem('[Video zu groß — max. 40MB]');return;}
+    addSystem('Video wird geladen…');
+    const reader=new FileReader();
+    reader.onload=e=>{
+      pendingMediaData=e.target.result;pendingMediaMime=file.type;pendingMediaType='video';
+      $('vid-preview').src=e.target.result;$('vid-preview').style.display='block';
+      $('img-preview').style.display='none';$('media-preview-overlay').style.display='flex';
     };
+    reader.onerror=()=>addSystem('[Video konnte nicht geladen werden]');
     reader.readAsDataURL(file);
-  } else {
-    if (file.size > MAX_FILE_BYTES) { addSystem(`[Datei zu groß — max. ${MAX_FILE_BYTES/1024/1024}MB]`); return; }
-    const reader = new FileReader();
-    reader.onload = async e => {
-      const id = newMsgId();
-      try {
-        const payload = await encrypt(e.target.result);
-        ws.send(JSON.stringify({ type: 'file', id, payload, filename: file.name, filesize: file.size }));
-        addFileMessage(e.target.result, file.name, file.size, 'self', id, Date.now(), !partnerConnected);
-      } catch { addSystem('[Datei konnte nicht gesendet werden]'); }
+  }else{
+    if(file.size>MAX_FILE_BYTES){addSystem(`[Datei zu groß — max. ${MAX_FILE_BYTES/1024/1024}MB]`);return;}
+    addSystem(`Datei "${file.name}" wird gesendet…`);
+    const reader=new FileReader();
+    reader.onload=async e=>{
+      const id=newMsgId();
+      try{const payload=await encrypt(e.target.result);ws.send(JSON.stringify({type:'file',id,payload,filename:file.name,filesize:file.size}));addFileMessage(e.target.result,file.name,file.size,'self',id,Date.now(),!partnerConnected);addSystem(`✓ "${file.name}" gesendet.`);}
+      catch(err){addSystem('[Datei konnte nicht gesendet werden: '+err.message+']');}
     };
+    reader.onerror=()=>addSystem('[Datei konnte nicht gelesen werden]');
     reader.readAsDataURL(file);
   }
 }
 
-$('btn-attach').addEventListener('click', () => $('file-input').click());
-$('file-input').addEventListener('change', async e => {
-  for (const f of e.target.files) await handleFileOrImage(f); e.target.value = '';
-});
-$('btn-media-cancel').addEventListener('click', () => {
-  $('media-preview-overlay').style.display = 'none'; pendingMediaData = null;
-});
-$('btn-media-send').addEventListener('click', async () => {
-  if (!pendingMediaData || ws?.readyState !== WebSocket.OPEN) return;
-  $('media-preview-overlay').style.display = 'none';
-  const id = newMsgId();
-  const sdSeconds = $('sd-check').checked ? parseInt($('sd-timer').value) : null;
-  try {
-    const payload = await encrypt(pendingMediaData);
-    if (pendingMediaType === 'image') {
-      ws.send(JSON.stringify({ type: 'image', id, payload, mime: pendingMediaMime, sdSeconds }));
-      addImageMessage(pendingMediaData, 'self', id, Date.now(), !partnerConnected);
-      if (sdSeconds) scheduleSelfDestruct(id, sdSeconds);
-    } else {
-      ws.send(JSON.stringify({ type: 'video', id, payload, sdSeconds }));
-      addVideoMessage(pendingMediaData, 'self', id, Date.now(), !partnerConnected);
-      if (sdSeconds) scheduleSelfDestruct(id, sdSeconds);
+$('btn-attach').addEventListener('click',()=>$('file-input').click());
+$('file-input').addEventListener('change',async e=>{for(const f of e.target.files)await handleFileOrImage(f);e.target.value='';});
+$('btn-media-cancel').addEventListener('click',()=>{$('media-preview-overlay').style.display='none';pendingMediaData=null;});
+$('btn-media-send').addEventListener('click',async()=>{
+  if(!pendingMediaData||ws?.readyState!==1){addSystem('[Nicht verbunden]');return;}
+  $('media-preview-overlay').style.display='none';
+  addSystem('Wird gesendet…');
+  const id=newMsgId(),sdSeconds=$('sd-check').checked?parseInt($('sd-timer').value):null;
+  try{
+    const payload=await encrypt(pendingMediaData);
+    if(pendingMediaType==='image'){
+      ws.send(JSON.stringify({type:'image',id,payload,mime:pendingMediaMime,sdSeconds}));
+      addImageMessage(pendingMediaData,'self',id,Date.now(),!partnerConnected);
+      if(sdSeconds)scheduleSelfDestruct(id,sdSeconds);
+    }else{
+      ws.send(JSON.stringify({type:'video',id,payload,sdSeconds}));
+      addVideoMessage(pendingMediaData,'self',id,Date.now(),!partnerConnected);
+      if(sdSeconds)scheduleSelfDestruct(id,sdSeconds);
     }
-  } catch { addSystem('[Senden fehlgeschlagen]'); }
-  pendingMediaData = null; pendingMediaMime = null; pendingMediaType = null;
+    addSystem('✓ Gesendet.');
+  }catch(err){addSystem('[Senden fehlgeschlagen: '+err.message+' — bitte nochmal versuchen]');}
+  pendingMediaData=null;pendingMediaMime=null;pendingMediaType=null;
 });
 
-// ── Video Aufnahme ────────────────────────────────────────────────────────────
-$('btn-video-rec').addEventListener('click', async () => {
-  if (videoRecorder?.state === 'recording') return;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    $('video-preview-live').srcObject = stream;
-    videoChunks = []; videoRecSeconds = 0;
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-    videoRecorder = new MediaRecorder(stream, { mimeType: mime });
-    videoRecorder.ondataavailable = e => { if (e.data.size > 0) videoChunks.push(e.data); };
-    videoRecorder.onstop = () => {
-      clearInterval(videoRecInterval); stream.getTracks().forEach(t => t.stop());
-      $('video-rec-bar').classList.remove('active'); $('video-preview-live').srcObject = null;
-      if (!videoChunks.length) return;
-      const blob = new Blob(videoChunks, { type: 'video/webm' });
-      const reader = new FileReader();
-      reader.onload = e => {
-        pendingMediaData = e.target.result; pendingMediaMime = 'video/webm'; pendingMediaType = 'video';
-        $('vid-preview').src = e.target.result; $('vid-preview').style.display = 'block';
-        $('img-preview').style.display = 'none';
-        $('media-preview-overlay').style.display = 'flex';
-      };
+// ── Video aufnehmen ───────────────────────────────────────────────────────────
+$('btn-video-rec') && $('btn-video-rec').addEventListener('click',async()=>{
+  if(videoRecorder?.state==='recording')return;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+    $('video-preview-live').srcObject=stream;videoChunks=[];videoRecSeconds=0;
+    const mime=getSupportedVideoMime();
+    videoRecorder=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+    videoRecorder.ondataavailable=e=>{if(e.data.size>0)videoChunks.push(e.data);};
+    videoRecorder.onstop=()=>{
+      clearInterval(videoRecInterval);stream.getTracks().forEach(t=>t.stop());
+      $('video-rec-bar').classList.remove('active');$('video-preview-live').srcObject=null;
+      if(!videoChunks.length)return;
+      const blob=new Blob(videoChunks,{type:mime||'video/webm'});
+      const reader=new FileReader();
+      reader.onload=e=>{pendingMediaData=e.target.result;pendingMediaMime=mime||'video/webm';pendingMediaType='video';$('vid-preview').src=e.target.result;$('vid-preview').style.display='block';$('img-preview').style.display='none';$('media-preview-overlay').style.display='flex';};
       reader.readAsDataURL(blob);
     };
-    videoRecorder.start();
-    $('video-rec-bar').classList.add('active'); $('video-rec-time').textContent = '0:00';
-    videoRecInterval = setInterval(() => {
-      videoRecSeconds++;
-      const m = Math.floor(videoRecSeconds / 60), s = videoRecSeconds % 60;
-      $('video-rec-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
-      if (videoRecSeconds >= VIDEO_MAX_SEC) stopVideoRec();
-    }, 1000);
-  } catch { addSystem('[Kein Kamerazugriff]'); }
+    videoRecorder.start();$('video-rec-bar').classList.add('active');$('video-rec-time').textContent='0:00';
+    videoRecInterval=setInterval(()=>{videoRecSeconds++;const m=Math.floor(videoRecSeconds/60),s=videoRecSeconds%60;$('video-rec-time').textContent=`${m}:${String(s).padStart(2,'0')}`;if(videoRecSeconds>=VIDEO_MAX_SEC)stopVideoRec();},1000);
+  }catch{addSystem('[Kein Kamerazugriff]');}
 });
-function stopVideoRec() { if (videoRecorder?.state === 'recording') videoRecorder.stop(); }
-$('btn-video-cancel').addEventListener('click', () => {
-  videoChunks = [];
-  if (videoRecorder?.state === 'recording') {
-    videoRecorder.onstop = () => { clearInterval(videoRecInterval); $('video-rec-bar').classList.remove('active'); $('video-preview-live').srcObject = null; };
-    videoRecorder.stop();
-  }
-});
-$('btn-video-send').addEventListener('click', stopVideoRec);
+function stopVideoRec(){if(videoRecorder?.state==='recording')videoRecorder.stop();}
+$('btn-video-cancel')?.addEventListener('click',()=>{videoChunks=[];if(videoRecorder?.state==='recording'){videoRecorder.onstop=()=>{clearInterval(videoRecInterval);$('video-rec-bar').classList.remove('active');$('video-preview-live').srcObject=null;};videoRecorder.stop();}});
+$('btn-video-send')?.addEventListener('click',stopVideoRec);
 
-// ── Audio Aufnahme ────────────────────────────────────────────────────────────
-let analyser = null, waveAnim = null;
-function drawWaveform() {
-  if (!analyser) return;
-  const canvas = $('waveform'), ctx = canvas.getContext('2d');
-  const buf = new Uint8Array(analyser.frequencyBinCount);
-  const draw = () => {
-    waveAnim = requestAnimationFrame(draw);
-    analyser.getByteTimeDomainData(buf);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 1.5; ctx.beginPath();
-    const sw = canvas.width / buf.length;
-    buf.forEach((v, i) => { const x = i*sw, y = (v/128)*canvas.height/2; i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y); });
-    ctx.stroke();
-  };
-  draw();
+// ── Audio aufnehmen ───────────────────────────────────────────────────────────
+let analyser=null,waveAnim=null;
+function drawWaveform(){
+  if(!analyser)return;const canvas=$('waveform'),ctx=canvas.getContext('2d');const buf=new Uint8Array(analyser.frequencyBinCount);
+  const draw=()=>{waveAnim=requestAnimationFrame(draw);analyser.getByteTimeDomainData(buf);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#00ff41';ctx.lineWidth=1.5;ctx.beginPath();const sw=canvas.width/buf.length;buf.forEach((v,i)=>{const x=i*sw,y=(v/128)*canvas.height/2;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();};draw();
 }
-$('btn-mic').addEventListener('click', async () => {
-  if (mediaRecorder?.state === 'recording') return;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser(); analyser.fftSize = 256; src.connect(analyser);
-    audioChunks = []; recSeconds = 0;
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      cancelAnimationFrame(waveAnim); clearInterval(recInterval);
-      stream.getTracks().forEach(t => t.stop()); audioCtx.close();
+$('btn-mic').addEventListener('click',async()=>{
+  if(mediaRecorder?.state==='recording')return;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const src=audioCtx.createMediaStreamSource(stream);
+    analyser=audioCtx.createAnalyser();analyser.fftSize=256;src.connect(analyser);
+    audioChunks=[];recSeconds=0;
+    const mime=getSupportedAudioMime(); // iOS Fix
+    try{mediaRecorder=new MediaRecorder(stream,mime?{mimeType:mime}:{});}
+    catch{mediaRecorder=new MediaRecorder(stream);} // Fallback ohne mimeType
+    mediaRecorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
+    mediaRecorder.onstop=async()=>{
+      cancelAnimationFrame(waveAnim);clearInterval(recInterval);
+      stream.getTracks().forEach(t=>t.stop());audioCtx.close();
       $('recording-bar').classList.remove('active');
-      if (!audioChunks.length) return;
-      const blob = new Blob(audioChunks, { type: 'audio/webm' });
-      const r = new FileReader();
-      r.onload = async e => {
-        const id = newMsgId();
-        try {
-          const payload = await encrypt(e.target.result);
-          ws.send(JSON.stringify({ type: 'audio', id, payload }));
-          addAudioMessage(e.target.result, 'self', id, Date.now(), !partnerConnected);
-        } catch { addSystem('[Audio konnte nicht gesendet werden]'); }
+      if(!audioChunks.length){addSystem('[Keine Audiodaten aufgenommen]');return;}
+      const actualMime=mediaRecorder.mimeType||mime||'audio/webm';
+      const blob=new Blob(audioChunks,{type:actualMime});
+      addSystem(`Sprachnachricht (${Math.round(blob.size/1024)}KB) wird gesendet…`);
+      const r=new FileReader();
+      r.onload=async e=>{
+        const id=newMsgId();
+        try{const payload=await encrypt(e.target.result);ws.send(JSON.stringify({type:'audio',id,payload}));addAudioMessage(e.target.result,'self',id,Date.now(),!partnerConnected);addSystem('✓ Sprachnachricht gesendet.');}
+        catch(err){addSystem('[Sprachnachricht konnte nicht gesendet werden: '+err.message+']');}
       };
+      r.onerror=()=>addSystem('[Audiodatei konnte nicht gelesen werden]');
       r.readAsDataURL(blob);
     };
-    mediaRecorder.start();
-    $('recording-bar').classList.add('active'); $('rec-time').textContent = '0:00';
-    recInterval = setInterval(() => {
-      recSeconds++;
-      const m = Math.floor(recSeconds / 60), s = recSeconds % 60;
-      $('rec-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
-      if (recSeconds >= 120) stopRec();
-    }, 1000);
+    mediaRecorder.start(100); // timeslice für stabilere Chunks auf iOS
+    $('recording-bar').classList.add('active');$('rec-time').textContent='0:00';
+    recInterval=setInterval(()=>{recSeconds++;const m=Math.floor(recSeconds/60),s=recSeconds%60;$('rec-time').textContent=`${m}:${String(s).padStart(2,'0')}`;if(recSeconds>=120)stopRec();},1000);
     drawWaveform();
-  } catch { addSystem('[Kein Mikrofonzugriff]'); }
+  }catch(e){addSystem('[Kein Mikrofonzugriff: '+e.message+']');}
 });
-function stopRec() { if (mediaRecorder?.state === 'recording') mediaRecorder.stop(); }
-$('btn-rec-cancel').addEventListener('click', () => {
-  audioChunks = [];
-  if (mediaRecorder?.state === 'recording') {
-    mediaRecorder.onstop = () => { cancelAnimationFrame(waveAnim); clearInterval(recInterval); $('recording-bar').classList.remove('active'); };
-    mediaRecorder.stop();
-  }
-});
-$('btn-rec-send').addEventListener('click', stopRec);
+function stopRec(){if(mediaRecorder?.state==='recording')mediaRecorder.stop();}
+$('btn-rec-cancel').addEventListener('click',()=>{audioChunks=[];if(mediaRecorder?.state==='recording'){mediaRecorder.onstop=()=>{cancelAnimationFrame(waveAnim);clearInterval(recInterval);$('recording-bar').classList.remove('active');};mediaRecorder.stop();}});
+$('btn-rec-send').addEventListener('click',stopRec);
 
 // ── Text senden ───────────────────────────────────────────────────────────────
-async function sendMessage() {
-  const input = $('msg-input'), text = input.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-
-  // Bearbeitung
-  if (editingId) {
-    const id = editingId; editingId = null; $('edit-bar').style.display = 'none';
-    input.value = ''; input.style.height = '';
-    try {
-      const payload = await encrypt(text);
-      ws.send(JSON.stringify({ type: 'edit', id, payload }));
-      const el = $('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);
-      if (el) {
-        const t = el.querySelector('.msg-text'); if (t) t.textContent = text;
-        let ed = el.querySelector('.edited-label');
-        if (!ed) { ed = document.createElement('span'); ed.className = 'edited-label'; ed.textContent = '(bearbeitet)'; el.querySelector('.msg-meta')?.prepend(ed); }
-      }
-    } catch { addSystem('[Bearbeitung fehlgeschlagen]'); }
-    return;
+async function sendMessage(){
+  const input=$('msg-input'),text=input.value.trim();
+  if(!text||!ws||ws.readyState!==1)return;
+  if(editingId){
+    const id=editingId;editingId=null;$('edit-bar').style.display='none';input.value='';input.style.height='';
+    try{const payload=await encrypt(text);ws.send(JSON.stringify({type:'edit',id,payload}));const el=$('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);if(el){const t=el.querySelector('.msg-text');if(t)t.textContent=text;let ed=el.querySelector('.edited-label');if(!ed){ed=document.createElement('span');ed.className='edited-label';ed.textContent='(bearbeitet)';el.querySelector('.msg-meta')?.prepend(ed);}}}
+    catch{addSystem('[Bearbeitung fehlgeschlagen]');}return;
   }
-
-  if (text.length > MAX_TEXT_LEN) { addSystem(`[Max. ${MAX_TEXT_LEN} Zeichen]`); return; }
-  input.value = ''; input.style.height = ''; sendTyping(false);
-  const id = newMsgId();
-  const sdSeconds = sdTextEnabled ? parseInt($('sd-text-timer').value) : null;
-  const qId = replyToId, qText = replyToText;
-  replyToId = null; replyToText = null; $('reply-preview').style.display = 'none';
-  try {
-    const payload = await encrypt(text);
-    ws.send(JSON.stringify({ type: 'reply', id, payload, quoteId: qId, quoteText: qText?.slice(0,120), sdSeconds }));
-    addTextMessage(text, 'self', id, Date.now(), !partnerConnected, qId, qText);
-    if (sdSeconds) scheduleSelfDestruct(id, sdSeconds);
-  } catch { addSystem('[Verschlüsselung fehlgeschlagen]'); }
+  if(text.length>MAX_TEXT_LEN){addSystem(`[Max. ${MAX_TEXT_LEN} Zeichen]`);return;}
+  input.value='';input.style.height='';sendTyping(false);
+  const id=newMsgId(),sdSeconds=sdTextEnabled?parseInt($('sd-text-timer').value):null;
+  const qId=replyToId,qText=replyToText;replyToId=null;replyToText=null;$('reply-preview').style.display='none';
+  try{
+    const payload=await encrypt(text);
+    ws.send(JSON.stringify({type:'reply',id,payload,quoteId:qId,quoteText:qText?.slice(0,120),sdSeconds}));
+    addTextMessage(text,'self',id,Date.now(),!partnerConnected,qId,qText);
+    if(sdSeconds)scheduleSelfDestruct(id,sdSeconds);
+  }catch{addSystem('[Verschlüsselung fehlgeschlagen]');}
 }
-$('btn-send').addEventListener('click', sendMessage);
-$('msg-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
+$('btn-send').addEventListener('click',sendMessage);
+$('msg-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
 
-// ── Raum erstellen ────────────────────────────────────────────────────────────
-let pendingRoomLink = null;
-
-// Einladungs-Text bauen
-function buildInviteText(link, senderName) {
-  const name = senderName ? senderName.trim() : '';
-  const shortLink = link.replace(/^https?:\/\//, '').split('#')[0]; // nur Domain/Pfad ohne Schlüssel
-  const fullLink  = link; // vollständiger Link mit Schlüssel
-
-  const greeting = name ? `${name} lädt dich zu einem privaten Chat ein.` : 'Du wurdest zu einem privaten Chat eingeladen.';
-
-  return {
-    message: `🔒 ${greeting}\n\nSicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig\n\n${fullLink}`,
-    shortLink,
-    greeting,
-  };
+// ── Einladungs-Text ───────────────────────────────────────────────────────────
+function buildInviteText(link,senderName){
+  const name=(senderName||'').trim();
+  const shortLink=link.replace(/^https?:\/\//,'').split('#')[0];
+  const greeting=name?`${name} lädt dich zu einem privaten Chat ein.`:'Du wurdest zu einem privaten Chat eingeladen.';
+  return{message:`🔒 ${greeting}\n\nSicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig\n\n${link}`,shortLink,greeting};
 }
 
-// Share-Screen befüllen
-function populateShareScreen(link, senderName) {
-  const { message, shortLink, greeting } = buildInviteText(link, senderName);
-
-  // Einladungs-Vorschau
-  const senderLine = $('invite-sender-line');
-  if (senderLine) senderLine.textContent = greeting;
-
-  const textPreview = $('invite-text-preview');
-  if (textPreview) textPreview.textContent = 'Sicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig';
-
-  const linkShort = $('invite-link-short');
-  if (linkShort) linkShort.textContent = shortLink;
-
+function populateShareScreen(link,senderName){
+  const{message,shortLink,greeting}=buildInviteText(link,senderName);
+  const sl=$('invite-sender-line');if(sl)sl.textContent=greeting;
+  const tp=$('invite-text-preview');if(tp)tp.textContent='Sicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig';
+  const ls=$('invite-link-short');if(ls)ls.textContent=shortLink;
   return message;
 }
 
-$('btn-create').addEventListener('click', async () => {
-  $('btn-create').disabled = true; $('btn-create').textContent = '[ INITIALISIERUNG … ]';
-  try {
-    const { key, b64url } = await generateKey(); cryptoKey = key;
-    const pwPlain    = $('pw-input').value;
-    const senderName = ($('sender-name')?.value || '').trim();
-    const pwHash     = pwPlain ? await hashPassword(pwPlain) : null;
-
-    const res = await fetch('/api/room', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pwHash })
-    });
-    if (!res.ok) throw new Error();
-    const data = await res.json(); roomId = data.roomId;
-
-    const link = `${location.origin}/r/${roomId}#${b64url}`;
-    pendingRoomLink = link;
-
-    // Share-Screen befüllen & Einladungs-Text generieren
-    const inviteMsg = populateShareScreen(link, senderName);
-
-    // Sofort in Zwischenablage — den vollständigen Einladungstext
-    try {
-      await navigator.clipboard.writeText(inviteMsg);
-      $('copy-notice-big').textContent = '✓ EINLADUNG KOPIERT — Jetzt in WhatsApp einfügen!';
-    } catch {
-      $('copy-notice-big').textContent = 'Auf EINLADUNG KOPIEREN tippen';
-    }
-
-    pendingPwHash = null;
-    showScreen('share');
-    startCountdown(Date.now());
-
-  } catch {
-    $('btn-create').disabled = false; $('btn-create').textContent = '[ SICHEREN CHAT ERSTELLEN ]';
+// ── Raum erstellen ────────────────────────────────────────────────────────────
+$('btn-create').addEventListener('click',async()=>{
+  $('btn-create').disabled=true;$('btn-create').textContent='[ INITIALISIERUNG … ]';
+  try{
+    const{key,b64url}=await generateKey();cryptoKey=key;
+    const pwPlain=$('pw-input').value,senderName=($('sender-name')?.value||'').trim();
+    const pwHash=pwPlain?await hashPassword(pwPlain):null;
+    const res=await fetch('/api/room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pwHash})});
+    if(!res.ok)throw new Error();
+    const data=await res.json();roomId=data.roomId;
+    const link=`${location.origin}/r/${roomId}#${b64url}`;
+    pendingRoomLink=link;
+    const inviteMsg=populateShareScreen(link,senderName);
+    try{await navigator.clipboard.writeText(inviteMsg);$('copy-notice-big').textContent='✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';}
+    catch{$('copy-notice-big').textContent='Auf EINLADUNG KOPIEREN tippen';}
+    pendingPwHash=null;showScreen('share');startCountdown(Date.now());
+  }catch{
+    $('btn-create').disabled=false;$('btn-create').textContent='[ SICHEREN CHAT ERSTELLEN ]';
     alert('Raum konnte nicht erstellt werden.');
   }
 });
 
-// Kopieren-Button im Share-Screen
-if ($('btn-copy-big')) {
-  $('btn-copy-big').addEventListener('click', async () => {
-    if (!pendingRoomLink) return;
-    const senderName = ($('sender-name')?.value || '').trim();
-    const { message } = buildInviteText(pendingRoomLink, senderName);
-    try {
-      await navigator.clipboard.writeText(message);
-      $('btn-copy-big').textContent = '✓ KOPIERT!';
-      $('copy-notice-big').textContent = '✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';
-      setTimeout(() => { $('btn-copy-big').textContent = '📋 EINLADUNG KOPIEREN'; }, 2500);
-    } catch {
-      // Fallback: nur Link markieren
-      if ($('share-link-big')) {
-        const r = document.createRange(); r.selectNode($('share-link-big'));
-        getSelection().removeAllRanges(); getSelection().addRange(r);
-      }
+if($('btn-copy-big')){
+  $('btn-copy-big').addEventListener('click',async()=>{
+    if(!pendingRoomLink)return;
+    const senderName=($('sender-name')?.value||'').trim();
+    const{message}=buildInviteText(pendingRoomLink,senderName);
+    try{await navigator.clipboard.writeText(message);$('btn-copy-big').textContent='✓ KOPIERT!';$('copy-notice-big').textContent='✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';setTimeout(()=>$('btn-copy-big').textContent='📋 EINLADUNG KOPIEREN',2500);}
+    catch{if($('invite-link-short')){const r=document.createRange();r.selectNode($('invite-link-short'));getSelection().removeAllRanges();getSelection().addRange(r);}}
+  });
+}
+if($('btn-share-qr')){$('btn-share-qr').addEventListener('click',()=>{if(pendingRoomLink)showQR(pendingRoomLink);});}
+if($('btn-open-chat')){
+  $('btn-open-chat').addEventListener('click',()=>{
+    // Diskreter Link-Button im Header setzen
+    const linkBtn=$('btn-copy-link');
+    if(linkBtn){
+      linkBtn.style.display='flex';
+      linkBtn.onclick=async()=>{
+        if(!pendingRoomLink)return;
+        try{await navigator.clipboard.writeText(pendingRoomLink);linkBtn.textContent='✓';setTimeout(()=>linkBtn.textContent='🔗',2000);}
+        catch{showQR(pendingRoomLink);}
+      };
     }
-  });
-}
-
-// QR im Share-Screen
-if ($('btn-share-qr')) {
-  $('btn-share-qr').addEventListener('click', () => {
-    if (pendingRoomLink) showQR(pendingRoomLink);
-  });
-}
-
-// CHAT ÖFFNEN — erst jetzt WebSocket verbinden
-if ($('btn-open-chat')) {
-  $('btn-open-chat').addEventListener('click', () => {
-    if ($('share-link') && pendingRoomLink) $('share-link').textContent = pendingRoomLink;
-    if ($('copy-notice') && pendingRoomLink) $('copy-notice').textContent = '📋 Link bereits kopiert';
-    $('link-bar').style.display = 'block';
-    $('btn-qr').onclick  = () => { if (pendingRoomLink) showQR(pendingRoomLink); };
-    $('btn-copy').onclick = async () => {
-      if (!pendingRoomLink) return;
-      try {
-        await navigator.clipboard.writeText(pendingRoomLink);
-        $('btn-copy').textContent = '✓'; setTimeout(() => $('btn-copy').textContent = 'COPY', 2000);
-      } catch { getSelection().selectAllChildren($('share-link')); }
-    };
-    showScreen('chat');
-    openWebSocket(); // Erst hier WebSocket öffnen
+    showScreen('chat');openWebSocket();
   });
 }
 
 // ── PW Join ───────────────────────────────────────────────────────────────────
-$('btn-pw-join').addEventListener('click', joinWithPassword);
-$('pw-join').addEventListener('keydown', e => { if (e.key === 'Enter') joinWithPassword(); });
-async function joinWithPassword() {
-  const pw = $('pw-join').value;
-  if (!pw) { $('pw-error').style.display = 'block'; return; }
-  pendingPwHash = await hashPassword(pw); $('pw-error').style.display = 'none';
-  showScreen('chat'); openWebSocket();
-  try { const r = await fetch(`/api/room/${roomId}`); if (r.ok) { const d = await r.json(); startCountdown(d.createdAt); } } catch {}
+$('btn-pw-join').addEventListener('click',joinWithPassword);
+$('pw-join').addEventListener('keydown',e=>{if(e.key==='Enter')joinWithPassword();});
+async function joinWithPassword(){
+  const pw=$('pw-join').value;if(!pw){$('pw-error').style.display='block';return;}
+  pendingPwHash=await hashPassword(pw);$('pw-error').style.display='none';
+  showScreen('chat');openWebSocket();
+  try{const r=await fetch(`/api/room/${roomId}`);if(r.ok){const d=await r.json();startCountdown(d.createdAt);}}catch{}
 }
 
 // ── Fragment Init ─────────────────────────────────────────────────────────────
-async function initFromFragment() {
-  const match = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
-  if (!match) return false;
-  const frag = location.hash.slice(1);
-  if (!frag) { showClosed('Ungültiger Link — kein Schlüssel gefunden.'); return true; }
-  roomId = match[1];
-  try { cryptoKey = await importKey(frag); }
-  catch { showClosed('Schlüssel im Link ist ungültig.'); return true; }
-  history.replaceState(null, '', location.pathname);
-  try {
-    const res = await fetch(`/api/room/${roomId}`);
-    if (!res.ok) { showClosed('Raum existiert nicht oder wurde bereits gelöscht.'); return true; }
-    const data = await res.json();
-    if (data.hasPassword) { showScreen('pw'); return true; }
-    showScreen('chat'); openWebSocket(); startCountdown(data.createdAt);
-  } catch { showScreen('chat'); openWebSocket(); }
+async function initFromFragment(){
+  const match=location.pathname.match(/^\/r\/([a-f0-9]{32})$/);if(!match)return false;
+  const frag=location.hash.slice(1);if(!frag){showClosed('Ungültiger Link.');return true;}
+  roomId=match[1];
+  try{cryptoKey=await importKey(frag);}catch{showClosed('Schlüssel ungültig.');return true;}
+  history.replaceState(null,'',location.pathname);
+  try{
+    const res=await fetch(`/api/room/${roomId}`);
+    if(!res.ok){showClosed('Raum existiert nicht oder wurde gelöscht.');return true;}
+    const data=await res.json();
+    if(data.hasPassword){showScreen('pw');return true;}
+    showScreen('chat');openWebSocket();startCountdown(data.createdAt);
+  }catch{showScreen('chat');openWebSocket();}
   return true;
 }
 
-// ── WebSocket öffnen ──────────────────────────────────────────────────────────
-function openWebSocket() {
-  if (ws) { try { ws.close(); } catch {} ws = null; }
-  stopKeepalive();
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function openWebSocket(){
+  if(ws){try{ws.close();}catch{}ws=null;}stopKeepalive();
+  ws=new WebSocket(`${WS_PROTO}//${location.host}/ws/${roomId}`);
 
-  ws = new WebSocket(`${WS_PROTO}//${location.host}/ws/${roomId}`);
-
-  ws.addEventListener('open', () => {
-    reconnectAttempts = 0; cancelReconnect();
-    setStatus('waiting', 'WARTE AUF PARTNER …');
-    enableInput(true); startKeepalive();
-    if (pendingPwHash) ws.send(JSON.stringify({ type: 'auth', pwHash: pendingPwHash }));
-    // System-Meldung nur beim ersten Verbinden
-    if ($('messages').children.length === 0) {
+  ws.addEventListener('open',()=>{
+    reconnectAttempts=0;cancelReconnect();
+    setStatus('waiting','WARTE AUF PARTNER …');
+    enableInput(true);startKeepalive();
+    if(pendingPwHash)ws.send(JSON.stringify({type:'auth',pwHash:pendingPwHash}));
+    if($('messages').children.length===0)
       addSystem('Verbunden. Du kannst bereits schreiben — Nachrichten werden zugestellt wenn der andere beitritt.');
-    } else {
-      addSystem('✓ Verbindung wiederhergestellt.');
-    }
+    else addSystem('✓ Verbindung wiederhergestellt.');
   });
 
-  ws.addEventListener('message', async evt => {
-    let msg; try { msg = JSON.parse(evt.data); } catch { return; }
+  ws.addEventListener('message',async evt=>{
+    let msg;try{msg=JSON.parse(evt.data);}catch{return;}
+    switch(msg.type){
+      case 'pong':break;
+      case 'auth_ok':addSystem('Passwort korrekt ✓');break;
+      case 'auth_fail':intentionalClose=true;showClosed('Falsches Passwort.');break;
+      case 'room_sealed':$('sealed-banner').classList.add('visible');break;
 
-    switch (msg.type) {
-      case 'pong': break;
-      case 'auth_ok': addSystem('Passwort korrekt ✓'); break;
-      case 'auth_fail': intentionalClose = true; showClosed('Falsches Passwort.'); break;
-      case 'room_sealed': $('sealed-banner').classList.add('visible'); break;
-
-      case 'participant_count': {
-        const was = partnerConnected; partnerConnected = msg.count >= 2;
-        if (partnerConnected && !was) {
-          setStatus('connected', 'VERBUNDEN · E2E-VERSCHLÜSSELT');
-          setPartnerBanner('online'); addSystem('Partner ist online.');
-          for (const [id] of myMsgs) markDelivered(id);
-          hasShownNewMsgDivider = false;
-        } else if (!partnerConnected && was) {
-          setStatus('waiting', 'PARTNER OFFLINE');
-          setPartnerBanner('offline');
-          addSystem('Partner hat die Verbindung getrennt. Der Raum läuft weiter — er kann zurückkommen.');
-          hasShownNewMsgDivider = false;
-        } else if (!partnerConnected) {
-          setStatus('waiting', 'WARTE AUF PARTNER …');
-        }
+      case 'participant_count':{
+        const was=partnerConnected;partnerConnected=msg.count>=2;
+        if(partnerConnected&&!was){
+          setStatus('connected','VERBUNDEN · E2E-VERSCHLÜSSELT');
+          setPartnerBanner('online');addSystem('Partner ist online.');
+          for(const[id] of myMsgs)markDelivered(id);hasShownNewMsgDivider=false;
+        }else if(!partnerConnected&&was){
+          setStatus('waiting','PARTNER OFFLINE');setPartnerBanner('offline');
+          addSystem('Partner hat die Verbindung getrennt. Raum läuft weiter.');
+          hasShownNewMsgDivider=false;
+          // Anruf beenden wenn Partner weg
+          if(peerConn)cleanupCall();
+        }else if(!partnerConnected)setStatus('waiting','WARTE AUF PARTNER …');
         break;
       }
 
-      case 'chat': case 'reply': {
-        if (!partnerConnected) insertNewMsgDivider();
-        try {
-          const plain = await decrypt(msg.payload);
-          addTextMessage(plain, 'other', msg.id, msg.ts, false, msg.quoteId, msg.quoteText);
-          if (msg.pending) addSystem('Gesendet bevor du beigetreten bist.');
-          if (msg.sdSeconds) scheduleSelfDestruct(msg.id, msg.sdSeconds);
-          playPing(); vibrate(); bumpUnread();
-        } catch { addSystem('[Entschlüsselung fehlgeschlagen — falscher Schlüssel?]'); }
-        $('typing-indicator').style.display = 'none'; break;
+      case 'chat':case 'reply':{
+        if(!partnerConnected)insertNewMsgDivider();
+        try{const plain=await decrypt(msg.payload);addTextMessage(plain,'other',msg.id,msg.ts,false,msg.quoteId,msg.quoteText);if(msg.pending)addSystem('Gesendet bevor du beigetreten bist.');if(msg.sdSeconds)scheduleSelfDestruct(msg.id,msg.sdSeconds);playPing();vibrate();bumpUnread();}
+        catch{addSystem('[Entschlüsselung fehlgeschlagen]');}
+        $('typing-indicator').style.display='none';break;
       }
+      case 'image':{try{const p=await decrypt(msg.payload);addImageMessage(p,'other',msg.id,msg.ts,false);if(msg.sdSeconds)scheduleSelfDestruct(msg.id,msg.sdSeconds);playPing();vibrate();bumpUnread();}catch{addSystem('[Bild nicht entschlüsselbar]');}break;}
+      case 'video':{try{const p=await decrypt(msg.payload);addVideoMessage(p,'other',msg.id,msg.ts,false);if(msg.sdSeconds)scheduleSelfDestruct(msg.id,msg.sdSeconds);playPing();vibrate();bumpUnread();}catch{addSystem('[Video nicht entschlüsselbar]');}break;}
+      case 'audio':{try{const p=await decrypt(msg.payload);addAudioMessage(p,'other',msg.id,msg.ts,false);playPing();vibrate();bumpUnread();}catch{addSystem('[Audio nicht entschlüsselbar]');}break;}
+      case 'file':{try{const p=await decrypt(msg.payload);addFileMessage(p,msg.filename,msg.filesize,'other',msg.id,msg.ts,false);playPing();vibrate();bumpUnread();}catch{addSystem('[Datei nicht entschlüsselbar]');}break;}
+      case 'reaction':applyReaction(msg.msgId,msg.emoji,false);break;
+      case 'buffered':break;
 
-      case 'image': {
-        try { const p = await decrypt(msg.payload); addImageMessage(p,'other',msg.id,msg.ts,false); if(msg.sdSeconds)scheduleSelfDestruct(msg.id,msg.sdSeconds); playPing();vibrate();bumpUnread(); }
-        catch { addSystem('[Bild nicht entschlüsselbar]'); } break;
+      case 'read':{
+        const e=myMsgs.get(msg.id);
+        if(e){e.readEl.textContent='✓✓';e.readEl.className='read-status read-check';
+          const tl=document.createElement('span');tl.className='read-time';tl.textContent=` ${msg.readAt}`;e.readEl.after(tl);}break;
       }
-      case 'video': {
-        try { const p = await decrypt(msg.payload); addVideoMessage(p,'other',msg.id,msg.ts,false); if(msg.sdSeconds)scheduleSelfDestruct(msg.id,msg.sdSeconds); playPing();vibrate();bumpUnread(); }
-        catch { addSystem('[Video nicht entschlüsselbar]'); } break;
-      }
-      case 'audio': {
-        try { const p = await decrypt(msg.payload); addAudioMessage(p,'other',msg.id,msg.ts,false); playPing();vibrate();bumpUnread(); }
-        catch { addSystem('[Audio nicht entschlüsselbar]'); } break;
-      }
-      case 'file': {
-        try { const p = await decrypt(msg.payload); addFileMessage(p,msg.filename,msg.filesize,'other',msg.id,msg.ts,false); playPing();vibrate();bumpUnread(); }
-        catch { addSystem('[Datei nicht entschlüsselbar]'); } break;
-      }
+      case 'typing':$('typing-indicator').style.display=msg.active?'flex':'none';break;
+      case 'retract':applyRetract(msg.id);break;
+      case 'self_destruct_ack':scheduleSelfDestruct(msg.id,0);break;
 
-      case 'reaction': applyReaction(msg.msgId, msg.emoji, false); break;
-      case 'buffered': break;
+      case 'edit':{
+        try{const plain=await decrypt(msg.payload);const el=$('messages').querySelector(`[data-id="${CSS.escape(msg.id)}"]`);if(el){const t=el.querySelector('.msg-text');if(t)t.textContent=plain;let ed=el.querySelector('.edited-label');if(!ed){ed=document.createElement('span');ed.className='edited-label';ed.textContent='(bearbeitet)';el.querySelector('.msg-meta')?.prepend(ed);}}}catch{}break;
+      }
+      case 'extended':roomExpiry=msg.newExpiry;addSystem(`Raum verlängert. Noch ${msg.extensionsLeft}× möglich.`);break;
 
-      case 'read': {
-        const e = myMsgs.get(msg.id);
-        if (e) {
-          e.readEl.textContent = '✓✓'; e.readEl.className = 'read-status read-check';
-          const tl = document.createElement('span'); tl.className = 'read-time'; tl.textContent = ` ${msg.readAt}`;
-          e.readEl.after(tl);
-        }
+      // ── WebRTC Signaling ──────────────────────────────────────────────────
+      case 'webrtc_call':
+        // Eingehender Anruf
+        $('call-incoming').style.display='block';
+        playRingtone(true);vibrate([200,100,200,100,200]);
+        addSystem('📞 Eingehender Anruf — Annehmen oder Ablehnen');
         break;
-      }
 
-      case 'typing': $('typing-indicator').style.display = msg.active ? 'flex' : 'none'; break;
-      case 'retract': applyRetract(msg.id); break;
-      case 'self_destruct_ack': scheduleSelfDestruct(msg.id, 0); break;
-
-      case 'edit': {
-        try {
-          const plain = await decrypt(msg.payload);
-          const el = $('messages').querySelector(`[data-id="${CSS.escape(msg.id)}"]`);
-          if (el) {
-            const t = el.querySelector('.msg-text'); if (t) t.textContent = plain;
-            let ed = el.querySelector('.edited-label');
-            if (!ed) { ed = document.createElement('span'); ed.className = 'edited-label'; ed.textContent = '(bearbeitet)'; el.querySelector('.msg-meta')?.prepend(ed); }
-          }
-        } catch {} break;
-      }
-
-      case 'extended': {
-        roomExpiry = msg.newExpiry;
-        addSystem(`Raum verlängert. Noch ${msg.extensionsLeft}× möglich.`);
+      case 'webrtc_offer':
+        window._pendingOffer=msg.sdp;
         break;
-      }
 
-      case 'room_closed': intentionalClose = true; showClosed(closedReason(msg.reason)); break;
+      case 'webrtc_answer':
+        if(peerConn&&peerConn.signalingState!=='stable'){
+          try{await peerConn.setRemoteDescription(new RTCSessionDescription(msg.sdp));}
+          catch(e){addSystem('[Anruf-Fehler: '+e.message+']');}
+        }break;
 
+      case 'webrtc_ice':
+        if(peerConn&&msg.candidate){
+          try{await peerConn.addIceCandidate(new RTCIceCandidate(msg.candidate));}catch{}
+        }break;
+
+      case 'webrtc_hangup':
+        cleanupCall();addSystem('📵 Gesprächspartner hat aufgelegt.');break;
+
+      case 'room_closed':intentionalClose=true;showClosed(closedReason(msg.reason));break;
       case 'error':
-        if (msg.code === 'not_authenticated') { intentionalClose = true; showClosed('Authentifizierung fehlgeschlagen.'); }
-        else if (msg.code === 'max_extensions') addSystem('[Max. 3 Verlängerungen erreicht]');
-        else addSystem(`[Fehler: ${msg.code}]`);
-        break;
+        if(msg.code==='not_authenticated'){intentionalClose=true;showClosed('Authentifizierung fehlgeschlagen.');}
+        else if(msg.code==='max_extensions')addSystem('[Max. 3 Verlängerungen erreicht]');
+        else addSystem(`[Fehler: ${msg.code}]`);break;
     }
   });
 
-  ws.addEventListener('close', evt => {
+  ws.addEventListener('close',evt=>{
     stopKeepalive();
-    if (screens.closed.classList.contains('active') || intentionalClose) return;
-
-    // Bekannte harte Fehler → kein Reconnect
-    if (evt.code === 4001) { showClosed('Raum existiert nicht oder ist abgelaufen.'); return; }
-    if (evt.code === 4002) { showClosed('Raum ist voll (max. 2 Teilnehmer).'); return; }
-    if (evt.code === 4003) { showClosed('Authentifizierung fehlgeschlagen.'); return; }
-
-    // Alles andere → Auto-Reconnect
-    setStatus('disconnected', 'VERBINDUNG GETRENNT …');
-    scheduleReconnect();
+    if(screens.closed.classList.contains('active')||intentionalClose)return;
+    if(evt.code===4001){showClosed('Raum existiert nicht oder ist abgelaufen.');return;}
+    if(evt.code===4002){showClosed('Raum ist voll.');return;}
+    if(evt.code===4003){showClosed('Authentifizierung fehlgeschlagen.');return;}
+    setStatus('disconnected','VERBINDUNG GETRENNT …');scheduleReconnect();
   });
-
-  ws.addEventListener('error', () => {
-    // Kein showClosed hier — close-Event folgt und übernimmt
-    setStatus('disconnected', 'VERBINDUNGSFEHLER');
-  });
+  ws.addEventListener('error',()=>setStatus('disconnected','VERBINDUNGSFEHLER'));
 }
 
 // ── Beenden ───────────────────────────────────────────────────────────────────
-$('btn-end').addEventListener('click', () => {
-  if (!confirm('Chat wirklich beenden? Der Raum wird sofort für beide gelöscht.')) return;
-  intentionalClose = true; cancelReconnect();
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' }));
-  showClosed('Du hast den Chat beendet. Alle Nachrichten wurden gelöscht.');
+$('btn-end').addEventListener('click',()=>{
+  if(!confirm('Chat wirklich beenden? Der Raum wird für beide gelöscht.'))return;
+  intentionalClose=true;cancelReconnect();cleanupCall();
+  if(ws?.readyState===1)ws.send(JSON.stringify({type:'end'}));
+  showClosed('Du hast den Chat beendet.');
 });
 
 // ── Neuer Chat ────────────────────────────────────────────────────────────────
-$('btn-new').addEventListener('click', () => {
-  intentionalClose = true; cancelReconnect(); stopKeepalive();
-  for (const t of sdTimers.values()) clearInterval(t); sdTimers.clear();
-  cryptoKey = null; roomId = null; ws = null; pendingRoomLink = null;
-  partnerConnected = typingActive = sdTextEnabled = false;
-  pendingPwHash = null; reconnectAttempts = 0; intentionalClose = false;
+$('btn-new').addEventListener('click',()=>{
+  intentionalClose=true;cancelReconnect();stopKeepalive();cleanupCall();
+  for(const t of sdTimers.values())clearInterval(t);sdTimers.clear();
+  cryptoKey=null;roomId=null;ws=null;pendingRoomLink=null;
+  partnerConnected=typingActive=sdTextEnabled=false;
+  pendingPwHash=null;reconnectAttempts=0;intentionalClose=false;
   clearInterval(countdownInterval);
-  $('messages').innerHTML = ''; myMsgs.clear();
-  $('typing-indicator').style.display   = 'none';
-  $('countdown-wrap').style.display     = 'none';
-  $('link-bar').style.display           = 'none';
-  $('sd-compose-row').style.display     = 'none';
+  $('messages').innerHTML='';myMsgs.clear();
+  ['typing-indicator','countdown-wrap','sd-compose-row','recording-bar','video-rec-bar','call-bar','call-incoming'].forEach(id=>{const el=$(id);if(el){el.style.display='none';el.classList?.remove('active');}});
   $('btn-sd-toggle').classList.remove('active');
-  $('reply-preview').style.display      = 'none';
-  $('edit-bar').style.display           = 'none';
-  $('recording-bar').classList.remove('active');
-  $('video-rec-bar').classList.remove('active');
-  $('reconnect-banner').className       = '';
-  $('sealed-banner').classList.remove('visible');
-  $('pw-input').value = ''; $('pw-strength-fill').style.width = '0';
-  if ($('copy-notice-big')) $('copy-notice-big').textContent = '';
-  if ($('share-link-big')) $('share-link-big').textContent = '';
-  if ($('sender-name')) $('sender-name').value = '';
-  pendingRoomLink = null;
+  ['reply-preview','edit-bar'].forEach(id=>{const el=$(id);if(el)el.style.display='none';});
+  $('reconnect-banner').className='';$('sealed-banner').classList.remove('visible');
+  $('pw-input').value='';$('pw-strength-fill').style.width='0';
+  if($('sender-name'))$('sender-name').value='';
+  if($('copy-notice-big'))$('copy-notice-big').textContent='';
+  if($('btn-copy-link'))$('btn-copy-link').style.display='none';
   enableInput(false);
-  const b = $('partner-banner'); if (b) b.style.display = 'none';
-  history.replaceState(null, '', '/');
-  showScreen('home');
-  $('btn-create').disabled = false; $('btn-create').textContent = '[ SICHEREN CHAT ERSTELLEN ]';
+  const b=$('partner-banner');if(b)b.style.display='none';
+  history.replaceState(null,'','/');showScreen('home');
+  $('btn-create').disabled=false;$('btn-create').textContent='[ SICHEREN CHAT ERSTELLEN ]';
 });
 
-function showClosed(reason) {
-  intentionalClose = true; cancelReconnect(); stopKeepalive(); clearInterval(countdownInterval);
-  for (const t of sdTimers.values()) clearInterval(t);
-  if (ws?.readyState === WebSocket.OPEN) try { ws.close(); } catch {}
-  ws = null; $('closed-reason').textContent = reason || 'Raum gelöscht.'; showScreen('closed');
+function showClosed(reason){
+  intentionalClose=true;cancelReconnect();stopKeepalive();clearInterval(countdownInterval);cleanupCall();
+  for(const t of sdTimers.values())clearInterval(t);
+  if(ws?.readyState===1)try{ws.close();}catch{}
+  ws=null;$('closed-reason').textContent=reason||'Raum gelöscht.';showScreen('closed');
 }
-function closedReason(code) {
-  return {
-    user_ended: 'Der Gesprächspartner hat den Chat beendet.',
-    inactivity: 'Raum nach 2 Stunden automatisch geschlossen.',
-    all_left:   'Alle Teilnehmer haben den Raum verlassen.',
-  }[code] || 'Raum wurde geschlossen.';
+function closedReason(code){
+  return{user_ended:'Der Gesprächspartner hat den Chat beendet.',inactivity:'Raum nach 2 Stunden geschlossen.',all_left:'Alle Teilnehmer haben den Raum verlassen.'}[code]||'Raum geschlossen.';
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-(async () => { const h = await initFromFragment(); if (!h) showScreen('home'); })();
+(async()=>{const h=await initFromFragment();if(!h)showScreen('home');})();

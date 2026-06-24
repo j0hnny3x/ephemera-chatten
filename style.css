@@ -814,3 +814,108 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
 /* Sender name input */
 #sender-name:focus { border-color: var(--matrix) !important; box-shadow: 0 0 8px #00ff4122; }
 #sender-name::placeholder { color: var(--muted); }
+
+/* ── Text Input (Name) ───────────────────────────── */
+.text-input {
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: .9rem;
+  padding: .6rem .75rem;
+  outline: none;
+  min-height: 44px;
+  transition: border-color .15s;
+  margin-top: .5rem;
+}
+.text-input:focus { border-color: var(--matrix); box-shadow: 0 0 8px #00ff4122; }
+.text-input::placeholder { color: var(--muted); }
+
+/* ── Header Link Button ──────────────────────────── */
+.icon-btn-header {
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  width: 32px; height: 32px;
+  font-size: .85rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.icon-btn-header:active { border-color: var(--matrix); background: var(--matrix-dim); }
+
+/* ── Anruf-Bar ───────────────────────────────────── */
+#call-bar {
+  flex-shrink: 0;
+  background: #001800;
+  border-bottom: 1px solid var(--matrix);
+  padding: .5rem .75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  animation: fadeIn .3s ease;
+}
+#call-status {
+  display: flex; align-items: center; gap: .5rem;
+  font-size: .78rem; color: var(--matrix);
+}
+.call-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--matrix);
+  animation: blink .8s step-end infinite;
+  flex-shrink: 0;
+}
+.call-dot.active { animation: none; box-shadow: 0 0 6px var(--matrix); }
+#call-timer { color: var(--text-bright); font-weight: 700; letter-spacing: .05em; }
+#call-controls { display: flex; gap: .4rem; }
+.call-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  width: 38px; height: 38px;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.call-btn:active { border-color: var(--matrix); background: var(--matrix-dim); }
+.call-btn-red { border-color: var(--danger); }
+.call-btn-red:active { background: var(--danger); }
+.call-btn.muted { border-color: var(--danger); background: #ff333322; }
+
+/* ── Eingehender Anruf ───────────────────────────── */
+#call-incoming {
+  flex-shrink: 0;
+  background: #001800;
+  border-bottom: 1px solid var(--matrix);
+  padding: .75rem 1rem;
+  animation: fadeIn .3s ease;
+}
+.incoming-text {
+  font-size: .85rem;
+  color: var(--text-bright);
+  text-align: center;
+  letter-spacing: .05em;
+  animation: blink .6s step-end infinite;
+}
+
+/* ── Invite Preview ──────────────────────────────── */
+.invite-preview-card { background: var(--surface); border: 1px solid var(--border2); overflow: hidden; padding: 0; }
+.invite-preview-header { display: flex; align-items: center; gap: .4rem; padding: .5rem .9rem; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: .68rem; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+.invite-app-icon { font-size: 1rem; }
+.invite-bubble { padding: .75rem .9rem; display: flex; flex-direction: column; gap: .5rem; }
+.invite-bubble-sender { font-size: .72rem; color: var(--matrix); font-weight: 700; letter-spacing: .04em; text-shadow: 0 0 6px var(--matrix); }
+.invite-bubble-text { font-size: .8rem; color: var(--text); line-height: 1.5; }
+.invite-link-card { display: flex; align-items: center; gap: .6rem; background: #000; border: 1px solid var(--border2); border-radius: var(--r); padding: .6rem .7rem; margin-top: .2rem; }
+.invite-link-icon { font-size: 1.5rem; flex-shrink: 0; width: 32px; text-align: center; }
+.invite-link-info { flex: 1; min-width: 0; }
+.invite-link-title { font-size: .75rem; font-weight: 700; color: var(--text-bright); margin-bottom: .1rem; }
+.invite-link-desc { font-size: .62rem; color: var(--muted); line-height: 1.4; margin-bottom: .15rem; }
+.invite-link-url { font-size: .6rem; color: var(--matrix); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.share-howto { font-size: .82rem; color: var(--muted); line-height: 1.9; }
+.share-howto strong { color: var(--text-bright); }
+#copy-notice-big { font-size: .78rem; color: var(--matrix); text-align: center; min-height: 1.2rem; text-shadow: 0 0 6px var(--matrix); letter-spacing: .04em; }

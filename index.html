@@ -2,29 +2,33 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" content="#000000">
   <title>ephemera</title>
   <link rel="stylesheet" href="/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
-<!-- Matrix Canvas Hintergrund -->
 <canvas id="matrix-canvas"></canvas>
 
 <div id="app">
 
-  <!-- ── Home ─────────────────────────────────────────────── -->
+  <!-- ══ HOME ══════════════════════════════════════ -->
   <div id="screen-home" class="screen active">
     <div class="logo-wrap">
       <div class="logo-icon"></div>
       <div>
         <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
-        <div class="sub">Privater Einmal-Chat · E2E-verschlüsselt</div>
+        <div class="sub">Privater Einmal-Chat · E2E</div>
       </div>
     </div>
+
     <div class="card">
       <ul class="features">
         <li>Kein Login · Keine Datenbank · Kein Account</li>
@@ -33,73 +37,88 @@
         <li>Max. 2 Teilnehmer · 2 Stunden Laufzeit</li>
       </ul>
     </div>
+
     <div class="card">
       <div class="pw-label">Raumpasswort <span class="optional">(optional)</span></div>
       <div class="pw-row">
-        <input id="pw-input" type="password" placeholder="Leer lassen = kein Passwort"
+        <input id="pw-input" type="password" placeholder="Leer = kein Passwort"
           autocomplete="new-password" spellcheck="false" maxlength="128">
-        <button id="pw-toggle" class="btn btn-ghost pw-eye">👁</button>
+        <button id="pw-toggle" class="btn btn-ghost pw-eye" type="button">👁</button>
       </div>
       <div id="pw-strength-bar"><div id="pw-strength-fill"></div></div>
       <p class="pw-hint">Wird <strong>niemals</strong> an den Server übertragen.</p>
     </div>
+
     <button id="btn-create" class="btn btn-primary">[ SICHEREN CHAT ERSTELLEN ]</button>
   </div>
 
-  <!-- ── PW Join ───────────────────────────────────────────── -->
+  <!-- ══ PASSWORT JOIN ══════════════════════════════ -->
   <div id="screen-pw" class="screen">
     <div class="logo-wrap">
       <div class="logo-icon"></div>
-      <div><h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
-      <div class="sub">Passwort erforderlich</div></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Passwort erforderlich</div>
+      </div>
     </div>
     <div class="card">
-      <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">Dieser Raum ist passwortgeschützt.</p>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem;line-height:1.6">
+        Dieser Raum ist passwortgeschützt. Gib das Passwort ein das dir der Ersteller mitgeteilt hat.
+      </p>
       <div class="pw-row">
-        <input id="pw-join" type="password" placeholder="Passwort …" autocomplete="current-password" maxlength="128">
-        <button id="pw-join-toggle" class="btn btn-ghost pw-eye">👁</button>
+        <input id="pw-join" type="password" placeholder="Passwort …"
+          autocomplete="current-password" maxlength="128">
+        <button id="pw-join-toggle" class="btn btn-ghost pw-eye" type="button">👁</button>
       </div>
-      <div id="pw-error" style="display:none;color:var(--danger);font-size:.8rem;margin-top:.5rem">Falsches Passwort.</div>
-      <button id="btn-pw-join" class="btn btn-primary" style="margin-top:1rem;width:100%">[ BEITRETEN ]</button>
+      <div id="pw-error" style="display:none;color:var(--danger);font-size:.8rem;margin-top:.5rem">
+        Falsches Passwort. Bitte erneut versuchen.
+      </div>
+      <button id="btn-pw-join" class="btn btn-primary" style="margin-top:1rem;width:100%">
+        [ BEITRETEN ]
+      </button>
     </div>
   </div>
 
-  <!-- ── Chat ─────────────────────────────────────────────── -->
+  <!-- ══ CHAT ══════════════════════════════════════ -->
   <div id="screen-chat" class="screen">
 
-    <div class="chat-toolbar">
+    <!-- Header -->
+    <div id="chat-header">
       <div id="status-bar">
         <span id="status-cursor" class="cursor-blink">█</span>
         <span id="status-text">VERBINDE…</span>
       </div>
-      <div id="font-controls">
-        <button class="font-btn" id="font-down">A−</button>
-        <span id="font-size-label">15px</span>
-        <button class="font-btn" id="font-up">A+</button>
+      <div id="header-right">
+        <div id="font-controls">
+          <button class="font-btn" id="font-down">A−</button>
+          <span id="font-size-label">16px</span>
+          <button class="font-btn" id="font-up">A+</button>
+        </div>
+        <div id="countdown-wrap" style="display:none">
+          <span id="countdown" class="countdown-val">2:00:00</span>
+          <button id="btn-extend" class="btn btn-ghost btn-xs">+1h</button>
+        </div>
+        <button id="btn-end" class="btn btn-danger btn-xs">END</button>
       </div>
-      <div id="countdown-wrap" style="display:none">
-        <span id="countdown" class="countdown-val">2:00:00</span>
-        <button id="btn-extend" class="btn btn-ghost btn-xs" title="Um 1 Stunde verlängern">+1h</button>
-      </div>
-      <button id="btn-end" class="btn btn-danger">[ BEENDEN ]</button>
     </div>
 
-    <!-- Versiegelt-Banner -->
-    <div id="sealed-banner" style="display:none">
-      🔒 RAUM VERSIEGELT — Niemand sonst kann beitreten
-    </div>
+    <!-- Versiegelt -->
+    <div id="sealed-banner">🔒 VERSIEGELT — Niemand sonst kann beitreten</div>
 
     <!-- Link-Leiste -->
-    <div id="link-bar" style="display:none">
+    <div id="link-bar">
       <div class="link-box">
         <div id="share-link"></div>
-        <button id="btn-copy" class="btn btn-ghost copy-btn">KOPIEREN</button>
-        <button id="btn-qr" class="btn btn-ghost">QR</button>
+        <button id="btn-copy" class="btn btn-ghost btn-xs">COPY</button>
+        <button id="btn-qr"   class="btn btn-ghost btn-xs">QR</button>
       </div>
       <div id="copy-notice"></div>
     </div>
 
-    <!-- QR -->
+    <!-- Reconnect -->
+    <div id="reconnect-banner"></div>
+
+    <!-- QR Overlay -->
     <div id="qr-overlay" style="display:none">
       <div class="qr-card">
         <div id="qr-canvas"></div>
@@ -108,14 +127,15 @@
       </div>
     </div>
 
-    <!-- Bild/Video Vorschau -->
+    <!-- Media Vorschau -->
     <div id="media-preview-overlay" style="display:none">
       <div class="media-preview-card">
         <img id="img-preview" alt="Vorschau" style="display:none">
-        <video id="vid-preview" controls style="display:none;max-width:100%;border-radius:6px"></video>
-        <div class="media-preview-actions">
-          <label style="color:var(--muted);font-size:.8rem;display:flex;align-items:center;gap:.4rem">
-            <input type="checkbox" id="sd-check"> Selbstlöschend nach
+        <video id="vid-preview" controls style="display:none"></video>
+        <div style="width:100%">
+          <label style="color:var(--muted);font-size:.8rem;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+            <input type="checkbox" id="sd-check">
+            Selbstlöschend nach
             <select id="sd-timer" class="sd-select">
               <option value="10">10 Sek.</option>
               <option value="30" selected>30 Sek.</option>
@@ -123,7 +143,7 @@
               <option value="300">5 Min.</option>
             </select>
           </label>
-          <div style="display:flex;gap:.5rem;margin-top:.75rem">
+          <div style="display:flex;gap:.5rem;margin-top:.85rem">
             <button id="btn-media-cancel" class="btn btn-ghost" style="flex:1">ABBRECHEN</button>
             <button id="btn-media-send"   class="btn btn-primary" style="flex:1">SENDEN</button>
           </div>
@@ -134,86 +154,108 @@
     <!-- Vollbild -->
     <div id="media-fullscreen" style="display:none">
       <img id="fs-img" alt="" style="display:none">
-      <video id="fs-vid" controls style="display:none;max-width:92vw;max-height:88vh"></video>
-      <button id="btn-fs-close" class="btn btn-ghost" style="position:absolute;top:1rem;right:1rem">✕</button>
+      <video id="fs-vid" controls style="display:none"></video>
+      <button id="btn-fs-close" class="btn btn-ghost">✕</button>
     </div>
 
-    <!-- Reconnect -->
-    <div id="reconnect-banner"></div>
-
     <!-- Nachrichten -->
-    <div id="messages"></div>
+    <div id="messages-wrap">
+      <div id="messages"></div>
+    </div>
 
     <!-- Typing -->
     <div id="typing-indicator" style="display:none">
-      <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
-      <span style="margin-left:.4rem;font-size:.72rem;color:var(--matrix)">schreibt…</span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span style="margin-left:.4rem;font-size:.7rem;color:var(--matrix)">schreibt…</span>
     </div>
 
-    <!-- Selbstlösch Compose -->
-    <div id="sd-compose-row" style="display:none">
-      <label style="color:var(--muted);font-size:.78rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
-        <input type="checkbox" id="sd-text-check"> Selbstlöschend nach
+    <!-- Bottom Input Area -->
+    <div id="chat-bottom">
+
+      <!-- Reply Vorschau -->
+      <div id="reply-preview">
+        <span id="reply-preview-text"></span>
+        <button id="btn-reply-cancel">✕</button>
+      </div>
+
+      <!-- Edit Bar -->
+      <div id="edit-bar">
+        <span>> Bearbeitung aktiv — Enter zum Speichern</span>
+        <button id="btn-edit-cancel">✕</button>
+      </div>
+
+      <!-- Selbstlösch Toggle -->
+      <div id="sd-compose-row">
+        <input type="checkbox" id="sd-text-check">
+        <label for="sd-text-check" style="cursor:pointer">Selbstlöschend nach</label>
         <select id="sd-text-timer" class="sd-select">
           <option value="10">10 Sek.</option>
           <option value="30" selected>30 Sek.</option>
           <option value="60">1 Min.</option>
           <option value="300">5 Min.</option>
         </select>
-      </label>
+      </div>
+
+      <!-- Audio Aufnahme -->
+      <div id="recording-bar">
+        <div class="rec-dot"></div>
+        <span id="rec-time">0:00</span>
+        <canvas id="waveform" width="140" height="28"></canvas>
+        <button id="btn-rec-cancel" class="btn btn-ghost btn-xs">✕</button>
+        <button id="btn-rec-send"   class="btn btn-primary btn-xs">SENDEN</button>
+      </div>
+
+      <!-- Video Aufnahme -->
+      <div id="video-rec-bar">
+        <div class="rec-dot" style="background:var(--matrix)"></div>
+        <span id="video-rec-time">0:00</span>
+        <video id="video-preview-live" autoplay muted playsinline></video>
+        <button id="btn-video-cancel" class="btn btn-ghost btn-xs">✕</button>
+        <button id="btn-video-send"   class="btn btn-primary btn-xs">SENDEN</button>
+      </div>
+
+      <!-- Haupt Input -->
+      <div class="input-main-row">
+        <div class="input-icons-left">
+          <button id="btn-sd-toggle" class="icon-btn" title="Selbstlöschend">⏱</button>
+          <button id="btn-attach"    class="icon-btn" title="Bild/Datei senden">📎</button>
+          <button id="btn-video-rec" class="icon-btn" title="Video aufnehmen">🎬</button>
+          <button id="btn-mic"       class="icon-btn" title="Sprachnachricht">🎙</button>
+        </div>
+        <input id="file-input"  type="file" accept="image/*,application/pdf,.zip,.doc,.docx,.txt,.csv" style="display:none" multiple>
+        <input id="video-input" type="file" accept="video/*" style="display:none">
+        <textarea id="msg-input" rows="1" maxlength="4000"
+          placeholder="Nachricht …" disabled></textarea>
+        <button id="btn-send" disabled>↑</button>
+      </div>
+
     </div>
-
-    <!-- Neue Nachrichten Trennlinie (wird dynamisch eingefügt) -->
-
-    <!-- Eingabe -->
-    <div class="input-row">
-      <button id="btn-sd-toggle" class="icon-btn" title="Selbstlöschend">⏱</button>
-      <button id="btn-attach"    class="icon-btn" title="Bild/Datei">📎</button>
-      <button id="btn-video-rec" class="icon-btn" title="Video">🎬</button>
-      <button id="btn-mic"       class="icon-btn" title="Sprachnachricht">🎙</button>
-      <input id="file-input" type="file" accept="image/*,application/pdf,.zip,.doc,.docx,.txt" style="display:none" multiple>
-      <input id="video-input" type="file" accept="video/*" style="display:none">
-      <textarea id="msg-input" rows="1" maxlength="4000"
-        placeholder="Nachricht … (Enter senden)" disabled></textarea>
-      <button id="btn-send" class="btn btn-primary send-btn" disabled>↑</button>
-    </div>
-
-    <!-- Aufnahme-Bar Audio -->
-    <div id="recording-bar" style="display:none">
-      <div class="rec-dot"></div>
-      <span id="rec-time">0:00</span>
-      <canvas id="waveform" width="160" height="32"></canvas>
-      <button id="btn-rec-cancel" class="btn btn-ghost">✕</button>
-      <button id="btn-rec-send"   class="btn btn-primary">SENDEN</button>
-    </div>
-
-    <!-- Aufnahme-Bar Video -->
-    <div id="video-rec-bar" style="display:none">
-      <div class="rec-dot" style="background:var(--matrix)"></div>
-      <span id="video-rec-time">0:00</span>
-      <video id="video-preview-live" autoplay muted playsinline style="width:120px;height:68px;border-radius:4px;object-fit:cover;border:1px solid var(--matrix)"></video>
-      <button id="btn-video-cancel" class="btn btn-ghost">✕</button>
-      <button id="btn-video-send"   class="btn btn-primary">SENDEN</button>
-    </div>
-
   </div>
 
-  <!-- ── Closed ─────────────────────────────────────────────── -->
+  <!-- ══ CLOSED ════════════════════════════════════ -->
   <div id="screen-closed" class="screen">
     <div class="card closed-card">
       <div class="closed-icon">[ ]</div>
-      <h1>VERBINDUNG GETRENNT</h1>
-      <p id="closed-reason">Dieser Raum wurde gelöscht.</p>
+      <h1>VERBINDUNG<br>GETRENNT</h1>
+      <p id="closed-reason">Dieser Raum wurde gelöscht. Alle Nachrichten sind weg.</p>
       <br>
-      <button id="btn-new" class="btn btn-primary">[ NEUEN CHAT ERSTELLEN ]</button>
+      <button id="btn-new" class="btn btn-primary" style="width:100%">
+        [ NEUEN CHAT ERSTELLEN ]
+      </button>
     </div>
   </div>
 
 </div>
 
+<!-- Emoji Picker -->
 <div id="emoji-picker" style="display:none">
   <div class="emoji-list" id="emoji-list"></div>
 </div>
+
+<!-- Drag & Drop Overlay -->
+<div id="drop-overlay"></div>
 
 <script src="/client.js"></script>
 </body>

@@ -121,10 +121,21 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') activateShield();
   else setTimeout(deactivateShield, 300);
 });
-window.addEventListener('blur',  () => { if (screens.chat?.classList.contains('active')) activateShield(); });
+
+// window.blur fängt Screenshot-Shortcuts ab (Handy-Buttons, Tastenkürzel)
+// Kurze Verzögerung damit echte Wechsel erkannt werden, aber Screenshot-Moment geschützt ist
+window.addEventListener('blur', () => {
+  if (screens.chat?.classList.contains('active') || $('video-call-overlay')?.style.display !== 'none') {
+    activateShield();
+  }
+});
 window.addEventListener('focus', () => setTimeout(deactivateShield, 300));
 window.addEventListener('beforeprint', activateShield);
 window.addEventListener('afterprint',  deactivateShield);
+
+// Android: Screenshot-Button löst oft kurzen Helligkeitswechsel aus
+// Wir können das nicht direkt erkennen, aber blur+focus Kombination hilft
+// iOS: Kein Weg — Power+Lautstärke geht am Browser vorbei
 
 // CSS Print-Schutz
 const printStyle = document.createElement('style');
@@ -786,25 +797,71 @@ function hangup(){
 }
 
 function cleanupCall(){
-  clearInterval(callTimer);callSeconds=0;
+  clearInterval(callTimer); callSeconds=0;
   clearTimeout(window._callTimeout);
-  window._pendingOffer=null;window._callAnswered=false;
-  isVideoCall=false;currentFacing='user';videoMuted=false;audioMuted=false;
+  window._pendingOffer=null; window._callAnswered=false;
+  isVideoCall=false; currentFacing='user'; videoMuted=false; audioMuted=false;
   stopRingtone();
-  if(localStream)localStream.getTracks().forEach(t=>t.stop());localStream=null;
-  if(peerConn)peerConn.close();peerConn=null;
-  $('call-bar').style.display='none';
-  $('call-incoming').style.display='none';
-  $('video-call-overlay').style.display='none';
-  $('call-timer').style.display='none';
-  $('video-call-timer').style.display='none';
-  $('call-status-dot').classList.remove('active');
-  $('video-call-dot').classList.remove('active');
-  $('btn-mute').textContent='🎤';$('btn-vid-mute').textContent='🎤';
-  $('btn-vid-cam').textContent='📷';
-  const ra=$('remote-audio');if(ra)ra.srcObject=null;
-  const rv=$('remote-video');if(rv)rv.srcObject=null;
-  const lv=$('local-video');if(lv)lv.srcObject=null;
+
+  // 1. Alle lokalen Tracks zuerst stoppen — WICHTIG: vor srcObject=null
+  if(localStream){
+    localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} });
+    localStream=null;
+  }
+
+  // 2. PeerConnection schließen
+  if(peerConn){
+    try{
+      peerConn.getSenders().forEach(s=>{ try{s.track?.stop();}catch{}; });
+      peerConn.close();
+    }catch{}
+    peerConn=null;
+  }
+
+  // 3. Video-Elemente sauber stoppen — iOS-Reihenfolge: pause → srcObject=null → src='' → load()
+  function stopVideoEl(id){
+    const el=$(id); if(!el)return;
+    try{
+      el.pause();
+      el.srcObject=null;
+      el.src='';          // leerer String statt removeAttribute für iOS
+      el.load();          // erzwingt Reset des Media-Elements
+    }catch{}
+  }
+  stopVideoEl('remote-video');
+  stopVideoEl('local-video');
+
+  // 4. Audio stoppen
+  const ra=$('remote-audio');
+  if(ra){ try{ra.pause();ra.srcObject=null;ra.src='';ra.load();}catch{} }
+
+  // 5. UI zurücksetzen — mit kleiner Verzögerung damit iOS Zeit hat den Stream zu beenden
+  const overlay=$('video-call-overlay');
+  if(overlay){
+    // Sofort visuell ausblenden
+    overlay.style.opacity='0';
+    overlay.style.pointerEvents='none';
+    // Nach kurzer Pause komplett entfernen
+    setTimeout(()=>{
+      overlay.style.display='none';
+      overlay.style.opacity='';
+      overlay.style.pointerEvents='';
+      overlay.classList.remove('blurred');
+      overlay.querySelector('.video-shield')?.remove();
+      overlay.querySelector('.video-waiting')?.remove();
+    },300);
+  }
+
+  $('call-bar').style.display        = 'none';
+  $('call-incoming').style.display   = 'none';
+  $('call-timer').style.display      = 'none';
+  $('video-call-timer').style.display= 'none';
+  $('call-status-dot')?.classList.remove('active');
+  $('video-call-dot')?.classList.remove('active');
+  if($('btn-mute'))       $('btn-mute').textContent       ='🎤';
+  if($('btn-vid-mute'))   $('btn-vid-mute').textContent   ='🎤';
+  if($('btn-vid-cam'))    $('btn-vid-cam').textContent    ='📷';
+  if($('btn-audio-output'))$('btn-audio-output').textContent='🔊';
 }
 
 // ── Call Buttons ──────────────────────────────────────────────────────────────
@@ -874,20 +931,7 @@ function hangup(){
   addSystem('📵 Anruf beendet.');
 }
 
-function cleanupCall(){
-  clearInterval(callTimer);callSeconds=0;
-  clearTimeout(window._callTimeout);
-  window._pendingOffer=null;window._callAnswered=false;
-  stopRingtone();
-  if(localStream)localStream.getTracks().forEach(t=>t.stop());localStream=null;
-  if(peerConn)peerConn.close();peerConn=null;
-  $('call-bar').style.display='none';
-  $('call-incoming').style.display='none';
-  $('call-timer').style.display='none';
-  $('call-status-dot').classList.remove('active');
-  $('btn-mute').textContent='🎤';isMuted=false;
-  const ra=$('remote-audio');if(ra){ra.srcObject=null;}
-}
+// cleanupCall ist weiter oben definiert
 
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -314,23 +314,42 @@ function playPing() {
   }catch{}
 }
 
-function playRingtone(active) {
+// ── Klingelton ────────────────────────────────────────────────────────────────
+let _ringCtx = null;
+let _ringInterval = null;
+
+function playRingtone() {
+  stopRingtone(); // Sicherstellen dass kein alter läuft
   try {
-    if (!active) { stopRingtone(); return; }
-    // Generierter Klingelton via Web Audio
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    const ring=()=>{
-      const osc=ctx.createOscillator(),gain=ctx.createGain();
-      osc.connect(gain);gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(880,ctx.currentTime);
-      gain.gain.setValueAtTime(0.2,ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);
-      osc.start();osc.stop(ctx.currentTime+0.4);
+    _ringCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ring = () => {
+      if (!_ringCtx) return;
+      try {
+        // Zwei Töne für realistischeren Klingelton
+        [[880, 0, 0.15], [660, 0.2, 0.15]].forEach(([freq, delay, dur]) => {
+          const osc  = _ringCtx.createOscillator();
+          const gain = _ringCtx.createGain();
+          osc.connect(gain); gain.connect(_ringCtx.destination);
+          osc.frequency.setValueAtTime(freq, _ringCtx.currentTime + delay);
+          gain.gain.setValueAtTime(0.25, _ringCtx.currentTime + delay);
+          gain.gain.exponentialRampToValueAtTime(0.001, _ringCtx.currentTime + delay + dur);
+          osc.start(_ringCtx.currentTime + delay);
+          osc.stop(_ringCtx.currentTime + delay + dur);
+        });
+      } catch {}
     };
-    ring(); window._ringInterval=setInterval(ring,1200);
-  }catch{}
+    ring();
+    _ringInterval = setInterval(ring, 1500);
+  } catch {}
 }
-function stopRingtone(){ clearInterval(window._ringInterval); }
+
+function stopRingtone() {
+  clearInterval(_ringInterval); _ringInterval = null;
+  if (_ringCtx) {
+    try { _ringCtx.close(); } catch {}
+    _ringCtx = null;
+  }
+}
 function vibrate(pattern=[80]){try{navigator.vibrate?.(pattern);}catch{}}
 
 // ── Tab Badge ─────────────────────────────────────────────────────────────────
@@ -700,57 +719,85 @@ let currentFacing  = 'user';  // 'user' = vorne, 'environment' = hinten
 let videoMuted     = false;
 let audioMuted     = false;
 
-// ── Anruf starten ─────────────────────────────────────────────────────────────
+// ── Anruf starten (Anrufer) ──────────────────────────────────────────────────
 async function startCall(withVideo = false) {
-  if(!partnerConnected){addSystem('// Partner muss erst online sein.');return;}
-  if(peerConn){addSystem('// Bereits in einem Anruf.');return;}
+  if (!partnerConnected) { addSystem('// Partner muss erst online sein.'); return; }
+  if (peerConn) { addSystem('// Bereits in einem Anruf.'); return; }
   isVideoCall = withVideo;
-  ws.send(JSON.stringify({type:'webrtc_call', withVideo}));
-  if(withVideo) showVideoCallOverlay('Warte auf Annahme…');
+  if (withVideo) showVideoCallOverlay('Warte auf Annahme…');
   else showCallBar('Warte auf Annahme…');
+  ws.send(JSON.stringify({ type: 'webrtc_call', withVideo }));
   addSystem(withVideo ? '📹 Videoanruf gestartet…' : '📞 Audioanruf gestartet…');
-  window._callTimeout = setTimeout(()=>{
-    if(!peerConn){cleanupCall();addSystem('// Anruf nicht angenommen.');}
+  window._callTimeout = setTimeout(() => {
+    if (!peerConn) { cleanupCall(); addSystem('// Anruf nicht angenommen.'); }
   }, 30000);
 }
 
-// ── Anrufer: Partner hat angenommen ──────────────────────────────────────────
-async function onCallReady(){
+// ── Anrufer: Partner bereit → Offer senden ───────────────────────────────────
+async function onCallReady() {
   clearTimeout(window._callTimeout);
-  try{
+  try {
+    // 1. Kamera/Mikrofon holen
     localStream = await getMedia(isVideoCall, currentFacing);
+    if (isVideoCall) attachLocalVideo(localStream);
+
+    // 2. PeerConnection erstellen
     peerConn = await createPeerConnection();
+
+    // 3. Tracks ZUERST hinzufügen — wichtig für Video
     localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
-    if(isVideoCall) attachLocalVideo(localStream);
-    const offer = await peerConn.createOffer({offerToReceiveAudio:true, offerToReceiveVideo:isVideoCall});
+
+    // 4. Offer erstellen mit expliziten Transceivers für Video
+    if (isVideoCall) {
+      // Sicherstellen dass Video-Transceiver existiert
+      peerConn.addTransceiver('video', { direction: 'sendrecv' });
+    }
+
+    const offer = await peerConn.createOffer();
     await peerConn.setLocalDescription(offer);
-    ws.send(JSON.stringify({type:'webrtc_offer', sdp:peerConn.localDescription}));
-    if(isVideoCall) $('video-call-text').textContent = 'Verbinde…';
+    ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
+    if (isVideoCall) $('video-call-text').textContent = 'Verbinde…';
     else showCallBar('Verbinde…');
-  }catch(e){
-    addSystem('[Fehler: '+e.message+']'); cleanupCall();
+  } catch(e) {
+    addSystem('[Fehler beim Anruf: ' + e.message + ']');
+    cleanupCall();
   }
 }
 
-// ── Partner: Anruf annehmen ───────────────────────────────────────────────────
-async function answerCall(){
-  $('call-incoming').style.display='none'; stopRingtone();
-  ws.send(JSON.stringify({type:'webrtc_ready'}));
-  if(isVideoCall) showVideoCallOverlay('Verbinde…');
+// ── Empfänger: Anruf annehmen ─────────────────────────────────────────────────
+async function answerCall() {
+  stopRingtone(); // ZUERST Klingelton stoppen
+  $('call-incoming').style.display = 'none';
+
+  if (isVideoCall) showVideoCallOverlay('Verbinde…');
   else showCallBar('Verbinde…');
   addSystem(isVideoCall ? '📹 Videoanruf wird verbunden…' : '📞 Anruf wird verbunden…');
-  try{
+
+  // Bereit-Signal an Anrufer
+  ws.send(JSON.stringify({ type: 'webrtc_ready' }));
+
+  try {
+    // 1. Kamera/Mikrofon holen
     localStream = await getMedia(isVideoCall, currentFacing);
+    if (isVideoCall) attachLocalVideo(localStream);
+
+    // 2. PeerConnection erstellen
     peerConn = await createPeerConnection();
+
+    // 3. Tracks hinzufügen
     localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
-    if(isVideoCall) attachLocalVideo(localStream);
-    if(window._pendingOffer){
-      await handleOffer(window._pendingOffer); window._pendingOffer=null;
+
+    // 4. Offer verarbeiten wenn schon da, sonst warten
+    if (window._pendingOffer) {
+      await handleOffer(window._pendingOffer);
+      window._pendingOffer = null;
+    } else {
+      window._callAnswered = true; // Flag: Offer wenn es kommt sofort verarbeiten
     }
-    window._callAnswered = true;
-  }catch(e){
-    addSystem('[Fehler: '+e.message+']');
-    ws.send(JSON.stringify({type:'webrtc_hangup'})); cleanupCall();
+  } catch(e) {
+    addSystem('[Fehler beim Annehmen: ' + e.message + ']');
+    ws.send(JSON.stringify({ type: 'webrtc_hangup' }));
+    cleanupCall();
   }
 }
 
@@ -1352,7 +1399,7 @@ function openWebSocket(){
         isVideoCall = !!msg.withVideo;
         $('call-incoming').style.display='block';
         $('incoming-type-text').textContent = isVideoCall ? '📹 Eingehender Videoanruf…' : '📞 Eingehender Anruf…';
-        playRingtone(true);vibrate([200,100,200,100,200]);
+        playRingtone();vibrate([200,100,200,100,200]);
         addSystem(isVideoCall?'📹 Eingehender Videoanruf — Annehmen oder Ablehnen':'📞 Eingehender Anruf — Annehmen oder Ablehnen');
         break;
 

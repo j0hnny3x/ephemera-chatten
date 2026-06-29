@@ -1127,3 +1127,120 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
 }
 .output-option:hover { background: var(--surface2); }
 .output-option.active { color: var(--matrix); }
+
+/* ══════════════════════════════════════════════════
+   AUSZIEHBARE ACTION TRAY
+   ══════════════════════════════════════════════════ */
+
+/* Tray Container */
+.action-tray {
+  overflow: hidden;
+  transition: max-height .3s cubic-bezier(.4,0,.2,1),
+              opacity .25s ease;
+  max-height: 0;
+  opacity: 0;
+}
+.action-tray.expanded {
+  max-height: 120px;
+  opacity: 1;
+}
+
+/* Griff zum Hochziehen */
+.tray-handle {
+  display: flex;
+  justify-content: center;
+  padding: .35rem 0 .2rem;
+  cursor: pointer;
+}
+.tray-grip {
+  width: 36px; height: 4px;
+  background: var(--border2);
+  border-radius: 2px;
+  transition: background .15s;
+}
+.tray-handle:active .tray-grip { background: var(--matrix); }
+
+/* Icon-Reihe */
+.tray-icons {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: .4rem .5rem .65rem;
+  gap: .25rem;
+}
+
+.tray-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .25rem;
+  flex: 1;
+}
+
+.tray-btn {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  font-size: 1.4rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  /* Touch-Feedback */
+  -webkit-tap-highlight-color: transparent;
+}
+.tray-btn:active {
+  background: var(--matrix-dim);
+  border-color: var(--matrix);
+  transform: scale(.92);
+}
+.tray-btn.active {
+  background: var(--matrix-dim);
+  border-color: var(--matrix);
+}
+
+.tray-label {
+  font-size: .62rem;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-align: center;
+}
+
+/* Toggle-Button in der Input-Zeile */
+.tray-toggle-btn {
+  border-radius: 50% !important;
+  font-size: 1.2rem !important;
+  font-weight: 700;
+  transition: transform .25s ease, background .15s !important;
+  flex-shrink: 0;
+}
+.tray-toggle-btn.open {
+  transform: rotate(45deg);
+  border-color: var(--matrix) !important;
+  background: var(--matrix-dim) !important;
+}
+
+/* Input-Zeile etwas größer */
+#msg-input {
+  font-size: 1rem !important;
+  min-height: 46px !important;
+  border-radius: 24px !important;
+  padding: .7rem 1rem !important;
+}
+
+/* Auf Tablet: Tray inline statt ausfahrbar */
+@media (min-width: 600px) {
+  .action-tray { display: none; }
+  .tray-toggle-btn { display: none !important; }
+  .input-main-row {
+    position: relative;
+  }
+  /* Tablet zeigt alle Buttons inline */
+  .input-main-row::before {
+    display: none;
+  }
+  #chat-bottom::before {
+    content: '';
+    display: flex;
+  }
+}

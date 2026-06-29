@@ -602,9 +602,88 @@ function applyFontSize(s){fontSize=Math.min(22,Math.max(12,s));$('messages').sty
 $('font-up').addEventListener('click',()=>applyFontSize(fontSize+1));
 $('font-down').addEventListener('click',()=>applyFontSize(fontSize-1));
 
-// ── SD Toggle & Verlängern ────────────────────────────────────────────────────
-$('btn-sd-toggle').addEventListener('click',()=>{sdTextEnabled=!sdTextEnabled;$('btn-sd-toggle').classList.toggle('active',sdTextEnabled);$('sd-compose-row').style.display=sdTextEnabled?'flex':'none';});
-$('btn-extend').addEventListener('click',()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'extend'}));});
+// ── Action Tray (ausziehbare Icon-Leiste) ─────────────────────────────────────
+function initTray() {
+  const tray       = $('action-tray');
+  const toggleBtn  = $('btn-tray-toggle');
+  const handle     = $('tray-handle');
+  if (!tray || !toggleBtn) return;
+
+  function openTray() {
+    tray.classList.add('expanded');
+    toggleBtn.classList.add('open');
+    toggleBtn.textContent = '＋'; // bleibt + aber rotiert via CSS
+  }
+  function closeTray() {
+    tray.classList.remove('expanded');
+    toggleBtn.classList.remove('open');
+  }
+  function toggleTray() {
+    tray.classList.contains('expanded') ? closeTray() : openTray();
+  }
+
+  toggleBtn.addEventListener('click', toggleTray);
+  handle?.addEventListener('click', toggleTray);
+
+  // Tray schließen wenn Nachricht getippt wird
+  $('msg-input').addEventListener('focus', closeTray);
+
+  // Tray-Buttons mit Aktionen verbinden
+  $('btn-call')      ?.addEventListener('click', () => { closeTray(); startCall(false); });
+  $('btn-video-call')?.addEventListener('click', () => { closeTray(); startCall(true); });
+  $('btn-attach')    ?.addEventListener('click', () => { closeTray(); $('file-input').click(); });
+  $('btn-mic')       ?.addEventListener('click', async () => {
+    closeTray();
+    // Mikrofon-Aufnahme starten
+    if (mediaRecorder?.state === 'recording') return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 256; src.connect(analyser);
+      audioChunks = []; recSeconds = 0;
+      const mime = getSupportedAudioMime();
+      try { mediaRecorder = new MediaRecorder(stream, mime ? {mimeType:mime} : {}); }
+      catch { mediaRecorder = new MediaRecorder(stream); }
+      mediaRecorder.ondataavailable = e => { if(e.data.size > 0) audioChunks.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        cancelAnimationFrame(waveAnim); clearInterval(recInterval);
+        stream.getTracks().forEach(t => t.stop()); audioCtx.close();
+        $('recording-bar').classList.remove('active');
+        if (!audioChunks.length) { addSystem('[Keine Audiodaten]'); return; }
+        const actualMime = mediaRecorder.mimeType || mime || 'audio/webm';
+        const blob = new Blob(audioChunks, {type: actualMime});
+        addSystem(`Sprachnachricht (${Math.round(blob.size/1024)}KB) wird gesendet…`);
+        const r = new FileReader();
+        r.onload = async e => {
+          const id = newMsgId();
+          try {
+            const payload = await encrypt(e.target.result);
+            ws.send(JSON.stringify({type:'audio', id, payload}));
+            addAudioMessage(e.target.result, 'self', id, Date.now(), !partnerConnected);
+            addSystem('✓ Sprachnachricht gesendet.');
+          } catch(err) { addSystem('[Audio konnte nicht gesendet werden: '+err.message+']'); }
+        };
+        r.readAsDataURL(blob);
+      };
+      mediaRecorder.start(100);
+      $('recording-bar').classList.add('active'); $('rec-time').textContent = '0:00';
+      recInterval = setInterval(() => {
+        recSeconds++;
+        const m = Math.floor(recSeconds/60), s = recSeconds%60;
+        $('rec-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
+        if (recSeconds >= 120) stopRec();
+      }, 1000);
+      drawWaveform();
+    } catch(e) { addSystem('[Kein Mikrofonzugriff: '+e.message+']'); }
+  });
+
+  $('btn-sd-toggle')?.addEventListener('click', () => {
+    sdTextEnabled = !sdTextEnabled;
+    $('btn-sd-toggle').classList.toggle('active', sdTextEnabled);
+    $('sd-compose-row').style.display = sdTextEnabled ? 'flex' : 'none';
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WebRTC — Audio & Video Anruf
@@ -708,23 +787,32 @@ async function flipCamera(){
 
 // ── Video-Overlay zeigen ──────────────────────────────────────────────────────
 function showVideoCallOverlay(statusText){
-  $('video-call-overlay').style.display='block';
-  $('video-call-text').textContent=statusText;
-  $('call-bar').style.display='none';
-  // Platzhalter-Text
+  const overlay = $('video-call-overlay');
+  overlay.style.display   = 'block';
+  overlay.style.opacity   = '1';
+  overlay.style.pointerEvents = '';
+  $('video-call-text').textContent = statusText;
+  $('call-bar').style.display = 'none';
+  $('call-incoming').style.display = 'none';
+  // Platzhalter
   let waiting = $('video-waiting');
-  if(!waiting){waiting=document.createElement('div');waiting.className='video-waiting';waiting.id='video-waiting';waiting.textContent='> Warte auf Partner-Video…';$('video-call-overlay').appendChild(waiting);}
+  if(!waiting){
+    waiting = document.createElement('div');
+    waiting.className='video-waiting'; waiting.id='video-waiting';
+    waiting.textContent='> Warte auf Partner-Video…';
+    overlay.appendChild(waiting);
+  }
 }
 
 function attachLocalVideo(stream){
-  const localVid = $('local-video');
-  if(localVid){localVid.srcObject=stream;localVid.play().catch(()=>{});}
+  const lv = $('local-video');
+  if(lv){ lv.srcObject=stream; lv.play().catch(()=>{}); }
 }
 
 function attachRemoteVideo(stream){
-  const remoteVid = $('remote-video');
-  if(remoteVid){remoteVid.srcObject=stream;remoteVid.play().catch(()=>{});}
-  const waiting=$('video-waiting');if(waiting)waiting.remove();
+  const rv = $('remote-video');
+  if(rv){ rv.srcObject=stream; rv.play().catch(()=>{}); }
+  $('video-waiting')?.remove();
 }
 
 // ── PeerConnection erstellen ──────────────────────────────────────────────────
@@ -733,39 +821,47 @@ async function createPeerConnection(){
   const pc = new RTCPeerConnection({iceServers:servers, iceCandidatePoolSize:10});
 
   pc.onicecandidate = e=>{
-    if(e.candidate&&ws?.readyState===1)
-      ws.send(JSON.stringify({type:'webrtc_ice',candidate:e.candidate}));
+    if(e.candidate && ws?.readyState===1)
+      ws.send(JSON.stringify({type:'webrtc_ice', candidate:e.candidate}));
   };
 
   pc.ontrack = e=>{
-    const stream = e.streams[0];
-    if(isVideoCall){
-      // Video-Track → remote Video element
-      if(e.track.kind==='video') attachRemoteVideo(stream);
-      // Audio auch abspielen
-      const ra=$('remote-audio');if(ra){ra.srcObject=stream;ra.play().catch(()=>{});}
-    }else{
-      // Nur Audio
-      const ra=$('remote-audio');if(ra){ra.srcObject=stream;ra.play().catch(()=>{});}
+    const stream = e.streams[0] || new MediaStream([e.track]);
+
+    if(e.track.kind === 'video'){
+      // Video-Track angekommen → Partner hat Video
+      // Overlay auch beim Empfänger zeigen falls noch nicht sichtbar
+      isVideoCall = true;
+      const overlay = $('video-call-overlay');
+      if(!overlay || overlay.style.display === 'none'){
+        showVideoCallOverlay('Verbunden');
+      }
+      attachRemoteVideo(stream);
+    }
+
+    // Audio immer abspielen
+    if(e.track.kind === 'audio'){
+      const ra = $('remote-audio');
+      if(ra){ ra.srcObject = stream; ra.play().catch(()=>{}); }
     }
   };
 
   pc.onconnectionstatechange = ()=>{
-    console.log('[WebRTC]',pc.connectionState);
-    if(pc.connectionState==='connected'){
+    console.log('[WebRTC]', pc.connectionState);
+    if(pc.connectionState === 'connected'){
       if(isVideoCall){
-        $('video-call-text').textContent='Verbunden';
+        $('video-call-text').textContent = 'Verbunden';
         $('video-call-dot').classList.add('active');
         startVideoCallTimer();
-      }else{
+      } else {
         showCallBar('Verbunden');
         $('call-status-dot').classList.add('active');
         startCallTimer();
       }
-      addSystem(isVideoCall?'📹 Videoanruf verbunden.':'📞 Anruf verbunden.');
-    }else if(['disconnected','failed'].includes(pc.connectionState)){
-      setTimeout(()=>{if(peerConn?.connectionState!=='connected')cleanupCall();},3000);
-    }else if(pc.connectionState==='closed'){
+      addSystem(isVideoCall ? '📹 Videoanruf verbunden.' : '📞 Anruf verbunden.');
+    } else if(['disconnected','failed'].includes(pc.connectionState)){
+      setTimeout(()=>{ if(peerConn?.connectionState !== 'connected') cleanupCall(); }, 3000);
+    } else if(pc.connectionState === 'closed'){
       cleanupCall();
     }
   };
@@ -975,7 +1071,7 @@ async function handleFileOrImage(file){
   }
 }
 
-$('btn-attach').addEventListener('click',()=>$('file-input').click());
+// btn-attach handled in initTray
 $('file-input').addEventListener('change',async e=>{for(const f of e.target.files)await handleFileOrImage(f);e.target.value='';});
 $('btn-media-cancel').addEventListener('click',()=>{$('media-preview-overlay').style.display='none';pendingMediaData=null;});
 $('btn-media-send').addEventListener('click',async()=>{
@@ -1356,6 +1452,10 @@ function closedReason(code){
 (async()=>{
   initWatermark();
   initAudioOutput();
-  const h=await initFromFragment();
+  initTray();
+  $('btn-extend')?.addEventListener('click', () => {
+    if(ws?.readyState===1) ws.send(JSON.stringify({type:'extend'}));
+  });
+  const h = await initFromFragment();
   if(!h) showScreen('home');
 })();

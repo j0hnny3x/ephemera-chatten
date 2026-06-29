@@ -309,6 +309,7 @@ h1 {
   background: rgba(0,3,0,0.92);
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  position: relative;  /* für Shield + Wasserzeichen Overlay */
 }
 #messages-wrap::-webkit-scrollbar { width: 3px; }
 #messages-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 1px; }
@@ -919,3 +920,210 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
 .share-howto { font-size: .82rem; color: var(--muted); line-height: 1.9; }
 .share-howto strong { color: var(--text-bright); }
 #copy-notice-big { font-size: .78rem; color: var(--matrix); text-align: center; min-height: 1.2rem; text-shadow: 0 0 6px var(--matrix); letter-spacing: .04em; }
+
+/* ── Video-Anruf Overlay ─────────────────────────── */
+#video-call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+#remote-video {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  background: #001a00;
+}
+
+#local-video {
+  position: absolute;
+  bottom: 90px; right: 12px;
+  width: 100px; height: 140px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid var(--matrix);
+  background: #001a00;
+  z-index: 10;
+  cursor: pointer;
+  box-shadow: 0 0 10px #00ff4155;
+  transition: all .2s;
+}
+#local-video.pip-topleft { bottom: auto; top: 80px; right: 12px; }
+
+#video-call-header {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  padding: .65rem 1rem;
+  background: linear-gradient(rgba(0,0,0,.7), transparent);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  z-index: 20;
+}
+#video-call-text {
+  color: #fff;
+  font-size: .78rem;
+  font-family: monospace;
+  letter-spacing: .05em;
+}
+#video-call-timer {
+  color: var(--matrix);
+  font-size: .78rem;
+  font-family: monospace;
+  margin-left: auto;
+  text-shadow: 0 0 6px var(--matrix);
+}
+
+#video-call-controls {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 1rem 1.5rem calc(1rem + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0,0,0,.8));
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  z-index: 20;
+}
+
+.call-btn-big {
+  width: 58px !important;
+  height: 58px !important;
+  font-size: 1.5rem !important;
+}
+
+/* Kein Video — Platzhalter */
+#remote-video:not([srcObject]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.video-waiting {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  font-size: .85rem;
+  font-family: monospace;
+  letter-spacing: .05em;
+  z-index: 5;
+  text-align: center;
+}
+
+/* ── Anti-Screenshot Shield ──────────────────────── */
+#screenshot-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  background: #000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+}
+.shield-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .5rem;
+}
+.shield-icon {
+  font-size: 3rem;
+  animation: pulse 2s ease-in-out infinite;
+}
+.shield-text {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--matrix);
+  letter-spacing: .2em;
+  text-shadow: var(--matrix-glow);
+}
+.shield-sub {
+  font-size: .75rem;
+  color: var(--muted);
+  letter-spacing: .1em;
+}
+
+/* Wasserzeichen Canvas */
+#watermark-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;  /* unsichtbar normal, sichtbar auf Screenshot */
+}
+
+/* Video schwarz bei Tab-Wechsel */
+#video-call-overlay.blurred #remote-video {
+  filter: blur(30px) brightness(0);
+}
+#video-call-overlay.blurred #local-video {
+  filter: blur(30px) brightness(0);
+}
+.video-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: .5rem;
+}
+.video-shield-text {
+  color: var(--matrix);
+  font-size: .9rem;
+  font-family: monospace;
+  letter-spacing: .1em;
+  text-shadow: var(--matrix-glow);
+}
+
+/* Ausgabegerät Button */
+#btn-audio-output {
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  width: 38px; height: 38px;
+  font-size: .9rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  color: var(--text);
+}
+#btn-audio-output:active { border-color: var(--matrix); }
+
+/* Output Picker */
+#audio-output-picker {
+  display: none;
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--matrix);
+  border-radius: var(--r);
+  padding: .75rem;
+  z-index: 900;
+  min-width: 240px;
+  box-shadow: 0 0 20px #00ff4133;
+}
+.output-option {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .5rem .75rem;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: .82rem;
+  color: var(--text);
+  transition: background .1s;
+}
+.output-option:hover { background: var(--surface2); }
+.output-option.active { color: var(--matrix); }

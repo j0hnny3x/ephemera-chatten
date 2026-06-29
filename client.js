@@ -45,6 +45,144 @@ function showScreen(n) {
   if (n !== 'chat') window.scrollTo(0,0);
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ANTI-SCREENSHOT SCHUTZ
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Wasserzeichen ─────────────────────────────────────────────────────────────
+function initWatermark() {
+  const canvas = $('watermark-canvas');
+  if (!canvas) return;
+  function draw() {
+    const ctx = canvas.getContext('2d');
+    const p   = canvas.parentElement;
+    canvas.width  = p.offsetWidth;
+    canvas.height = p.offsetHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.globalAlpha = 0.045;
+    ctx.fillStyle   = '#00ff41';
+    ctx.font        = '12px monospace';
+    ctx.translate(canvas.width/2, canvas.height/2);
+    ctx.rotate(-28 * Math.PI / 180);
+    const text = `ephemera · ${new Date().toLocaleDateString('de-DE')} · VERTRAULICH`;
+    for (let y = -canvas.height; y < canvas.height; y += 110) {
+      for (let x = -canvas.width; x < canvas.width; x += 190) {
+        ctx.fillText(text, x, y);
+      }
+    }
+    ctx.restore();
+  }
+  draw();
+  new ResizeObserver(draw).observe(canvas.parentElement);
+  setInterval(draw, 60000);
+}
+
+// ── Shield — Chat wird schwarz wenn Tab verlassen ─────────────────────────────
+let shieldActive = false;
+
+function activateShield() {
+  if (shieldActive) return;
+  shieldActive = true;
+  const shield = $('screenshot-shield');
+  if (shield) shield.style.display = 'flex';
+  const wrap = $('messages-wrap');
+  if (wrap) wrap.style.filter = 'blur(20px) brightness(0)';
+  const overlay = $('video-call-overlay');
+  if (overlay && overlay.style.display !== 'none') {
+    overlay.classList.add('blurred');
+    let vs = overlay.querySelector('.video-shield');
+    if (!vs) {
+      vs = document.createElement('div'); vs.className = 'video-shield';
+      vs.innerHTML = '<div class="shield-icon">🔒</div><div class="video-shield-text">VIDEO AUSGEBLENDET</div>';
+      overlay.appendChild(vs);
+    }
+    vs.style.display = 'flex';
+  }
+}
+
+function deactivateShield() {
+  if (!shieldActive) return;
+  shieldActive = false;
+  const shield = $('screenshot-shield');
+  if (shield) shield.style.display = 'none';
+  const wrap = $('messages-wrap');
+  if (wrap) wrap.style.filter = '';
+  const overlay = $('video-call-overlay');
+  if (overlay) {
+    overlay.classList.remove('blurred');
+    const vs = overlay.querySelector('.video-shield');
+    if (vs) vs.style.display = 'none';
+  }
+}
+
+// Tab verlassen / Bildschirm sperren
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') activateShield();
+  else setTimeout(deactivateShield, 300);
+});
+window.addEventListener('blur',  () => { if (screens.chat?.classList.contains('active')) activateShield(); });
+window.addEventListener('focus', () => setTimeout(deactivateShield, 300));
+window.addEventListener('beforeprint', activateShield);
+window.addEventListener('afterprint',  deactivateShield);
+
+// CSS Print-Schutz
+const printStyle = document.createElement('style');
+printStyle.textContent = `@media print {
+  #screen-chat, #messages-wrap, #video-call-overlay { visibility:hidden!important; filter:blur(999px)!important; }
+  body::after { content:"Dieser Inhalt ist geschützt."; display:block; font-size:2rem; text-align:center; padding:4rem; visibility:visible!important; }
+}`;
+document.head.appendChild(printStyle);
+
+// ── Audio-Ausgabe ─────────────────────────────────────────────────────────────
+let currentSinkId = '';
+
+async function initAudioOutput() {
+  const btn = $('btn-audio-output');
+  if (!btn) return;
+  const remoteAudio = $('remote-audio');
+  if (!remoteAudio?.setSinkId) {
+    btn.title = 'Ausgabewahl nicht verfügbar auf diesem Gerät (iOS)';
+    btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed'; return;
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const headset = devices.filter(d=>d.kind==='audiooutput').find(d=>
+      /headset|bluetooth|airpod|wireless/i.test(d.label)
+    );
+    if (headset) {
+      const el = $('output-headset');
+      if (el) { el.style.display='flex'; el.dataset.sink=headset.deviceId; el.textContent=`🎧 ${headset.label||'Headset'}`; }
+    }
+  } catch {}
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const p = $('audio-output-picker');
+    if (p) p.style.display = p.style.display==='block' ? 'none' : 'block';
+  });
+
+  $('audio-output-picker')?.querySelectorAll('.output-option').forEach(opt => {
+    opt.addEventListener('click', async () => {
+      const sinkId = opt.dataset.sink || '';
+      try {
+        await remoteAudio.setSinkId(sinkId);
+        currentSinkId = sinkId;
+        $('audio-output-picker').querySelectorAll('.output-option').forEach(o=>o.classList.remove('active'));
+        opt.classList.add('active');
+        btn.textContent = sinkId===''?'📱':'🔊';
+        addSystem('// Audioausgabe: '+opt.textContent.trim());
+      } catch(e) { addSystem('[Ausgabewechsel nicht möglich: '+e.message+']'); }
+      $('audio-output-picker').style.display='none';
+    });
+  });
+
+  document.addEventListener('click', e => {
+    const p = $('audio-output-picker');
+    if (p && !p.contains(e.target) && e.target!==btn) p.style.display='none';
+  });
+}
+
 // ── Matrix ────────────────────────────────────────────────────────────────────
 function initMatrix() {
   const canvas = $('matrix-canvas'), ctx = canvas.getContext('2d');
@@ -382,22 +520,48 @@ function markDelivered(id){
 }
 
 // ── Selbstlösch ───────────────────────────────────────────────────────────────
-function scheduleSelfDestruct(id,seconds){
-  const el=$('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);if(!el)return;
-  let rem=seconds;
-  const sdSpan=document.createElement('span');sdSpan.className='sd-countdown';sdSpan.textContent=`⏱${rem}s`;
-  el.querySelector('.msg-meta')?.appendChild(sdSpan);
-  const t=setInterval(()=>{
-    rem--;sdSpan.textContent=`⏱${rem}s`;
-    if(rem<=0){
-      clearInterval(t);sdTimers.delete(id);el.classList.add('retracted');
-      ['msg-body','msg-img','msg-audio','msg-vid','msg-file'].forEach(cls=>el.querySelector('.'+cls)?.remove());
-      const ph=document.createElement('div');ph.className='msg-body';ph.textContent='[Nachricht gelöscht]';
-      el.insertBefore(ph,el.querySelector('.msg-meta'));
-      if(ws?.readyState===1)ws.send(JSON.stringify({type:'self_destruct_ack',id}));
+function scheduleSelfDestruct(id, seconds) {
+  const el = $('messages').querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (!el) return;
+
+  // Bereits ein Timer für diese ID? Abbrechen.
+  if (sdTimers.has(id)) { clearInterval(sdTimers.get(id)); sdTimers.delete(id); }
+
+  // Sofort löschen wenn seconds=0 (z.B. von self_destruct_ack)
+  function destroyMsg() {
+    el.classList.add('retracted');
+    ['msg-body','msg-img','msg-audio','msg-vid','msg-file'].forEach(cls => el.querySelector('.'+cls)?.remove());
+    el.querySelector('.msg-quote')?.remove();
+    const ph = document.createElement('div'); ph.className = 'msg-body'; ph.textContent = '[Nachricht gelöscht]';
+    const meta = el.querySelector('.msg-meta');
+    if (meta) el.insertBefore(ph, meta); else el.appendChild(ph);
+    if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'self_destruct_ack', id }));
+  }
+
+  if (seconds <= 0) { destroyMsg(); return; }
+
+  let rem = seconds;
+  // Span nur hinzufügen wenn noch nicht vorhanden
+  let sdSpan = el.querySelector('.sd-countdown');
+  if (!sdSpan) {
+    sdSpan = document.createElement('span');
+    sdSpan.className = 'sd-countdown';
+    el.querySelector('.msg-meta')?.appendChild(sdSpan);
+  }
+  sdSpan.textContent = `⏱${rem}s`;
+
+  const t = setInterval(() => {
+    rem--;
+    if (rem <= 0) {
+      clearInterval(t);
+      sdTimers.delete(id);
+      sdSpan.remove();
+      destroyMsg();
+    } else {
+      sdSpan.textContent = `⏱${rem}s`;
     }
-  },1000);
-  sdTimers.set(id,t);
+  }, 1000);
+  sdTimers.set(id, t);
 }
 
 // ── Reaktionen ────────────────────────────────────────────────────────────────
@@ -432,10 +596,7 @@ $('btn-sd-toggle').addEventListener('click',()=>{sdTextEnabled=!sdTextEnabled;$(
 $('btn-extend').addEventListener('click',()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'extend'}));});
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WebRTC ANRUF — mit korrektem Handshake
-// Ablauf: Anrufer sendet 'webrtc_call' → Partner klickt Annehmen →
-//         Partner sendet 'webrtc_ready' → Anrufer sendet Offer →
-//         Partner sendet Answer → ICE Kandidaten → Verbindung steht
+// WebRTC — Audio & Video Anruf
 // ══════════════════════════════════════════════════════════════════════════════
 async function getIceServers(){
   if(iceServers)return iceServers;
@@ -444,101 +605,253 @@ async function getIceServers(){
   return iceServers;
 }
 
-async function startCall(){
-  if(!partnerConnected){addSystem('// Partner muss erst online sein um anzurufen.');return;}
+let isVideoCall    = false;
+let currentFacing  = 'user';  // 'user' = vorne, 'environment' = hinten
+let videoMuted     = false;
+let audioMuted     = false;
+
+// ── Anruf starten ─────────────────────────────────────────────────────────────
+async function startCall(withVideo = false) {
+  if(!partnerConnected){addSystem('// Partner muss erst online sein.');return;}
   if(peerConn){addSystem('// Bereits in einem Anruf.');return;}
-  // Schritt 1: Partner informieren — warten auf 'webrtc_ready' bevor Offer
-  ws.send(JSON.stringify({type:'webrtc_call'}));
-  showCallBar('Warte auf Annahme…');
-  addSystem('📞 Anruf wird gestartet…');
-  // Timeout falls kein 'webrtc_ready' kommt
+  isVideoCall = withVideo;
+  ws.send(JSON.stringify({type:'webrtc_call', withVideo}));
+  if(withVideo) showVideoCallOverlay('Warte auf Annahme…');
+  else showCallBar('Warte auf Annahme…');
+  addSystem(withVideo ? '📹 Videoanruf gestartet…' : '📞 Audioanruf gestartet…');
   window._callTimeout = setTimeout(()=>{
     if(!peerConn){cleanupCall();addSystem('// Anruf nicht angenommen.');}
   }, 30000);
 }
 
+// ── Anrufer: Partner hat angenommen ──────────────────────────────────────────
 async function onCallReady(){
-  // Partner hat angenommen — jetzt Offer senden
   clearTimeout(window._callTimeout);
   try{
-    localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
-    peerConn=await createPeerConnection();
-    localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
-    const offer=await peerConn.createOffer({offerToReceiveAudio:true});
+    localStream = await getMedia(isVideoCall, currentFacing);
+    peerConn = await createPeerConnection();
+    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
+    if(isVideoCall) attachLocalVideo(localStream);
+    const offer = await peerConn.createOffer({offerToReceiveAudio:true, offerToReceiveVideo:isVideoCall});
     await peerConn.setLocalDescription(offer);
-    ws.send(JSON.stringify({type:'webrtc_offer',sdp:peerConn.localDescription}));
-    showCallBar('Verbinde Anruf…');
+    ws.send(JSON.stringify({type:'webrtc_offer', sdp:peerConn.localDescription}));
+    if(isVideoCall) $('video-call-text').textContent = 'Verbinde…';
+    else showCallBar('Verbinde…');
   }catch(e){
-    addSystem('[Fehler beim Anruf: '+e.message+']');
-    cleanupCall();
+    addSystem('[Fehler: '+e.message+']'); cleanupCall();
   }
 }
 
+// ── Partner: Anruf annehmen ───────────────────────────────────────────────────
 async function answerCall(){
-  $('call-incoming').style.display='none';
-  stopRingtone();
-  // Schritt 1: Anrufer informieren dass wir bereit sind
+  $('call-incoming').style.display='none'; stopRingtone();
   ws.send(JSON.stringify({type:'webrtc_ready'}));
-  showCallBar('Verbinde…');
-  addSystem('📞 Anruf wird verbunden…');
-  // Offer kommt jetzt vom Anrufer — wird in 'webrtc_offer' case verarbeitet
+  if(isVideoCall) showVideoCallOverlay('Verbinde…');
+  else showCallBar('Verbinde…');
+  addSystem(isVideoCall ? '📹 Videoanruf wird verbunden…' : '📞 Anruf wird verbunden…');
   try{
-    localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
-    peerConn=await createPeerConnection();
-    localStream.getTracks().forEach(t=>peerConn.addTrack(t,localStream));
-    // Wenn Offer schon da → sofort verarbeiten
+    localStream = await getMedia(isVideoCall, currentFacing);
+    peerConn = await createPeerConnection();
+    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
+    if(isVideoCall) attachLocalVideo(localStream);
     if(window._pendingOffer){
-      await handleOffer(window._pendingOffer);
-      window._pendingOffer=null;
+      await handleOffer(window._pendingOffer); window._pendingOffer=null;
     }
-    // sonst warten bis 'webrtc_offer' ankommt (setze Flag)
-    window._callAnswered=true;
+    window._callAnswered = true;
   }catch(e){
-    addSystem('[Fehler beim Annehmen: '+e.message+']');
-    ws.send(JSON.stringify({type:'webrtc_hangup'}));
-    cleanupCall();
+    addSystem('[Fehler: '+e.message+']');
+    ws.send(JSON.stringify({type:'webrtc_hangup'})); cleanupCall();
   }
 }
 
-async function handleOffer(sdp){
-  if(!peerConn)return;
-  await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
-  const answer=await peerConn.createAnswer();
-  await peerConn.setLocalDescription(answer);
-  ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+// ── Media abrufen ─────────────────────────────────────────────────────────────
+async function getMedia(video, facing='user'){
+  const constraints = {
+    audio: true,
+    video: video ? { facingMode: facing, width:{ideal:1280}, height:{ideal:720} } : false
+  };
+  return navigator.mediaDevices.getUserMedia(constraints);
 }
 
+// ── Kamera wechseln (vorne ↔ hinten) ─────────────────────────────────────────
+async function flipCamera(){
+  if(!localStream||!isVideoCall||!peerConn)return;
+  currentFacing = currentFacing === 'user' ? 'environment' : 'user';
+  try{
+    // Alten Video-Track stoppen
+    localStream.getVideoTracks().forEach(t=>t.stop());
+    // Neuen Track mit anderer Kamera
+    const newStream = await getMedia(true, currentFacing);
+    const newVideoTrack = newStream.getVideoTracks()[0];
+    // In PeerConnection ersetzen ohne Reconnect
+    const sender = peerConn.getSenders().find(s=>s.track?.kind==='video');
+    if(sender) await sender.replaceTrack(newVideoTrack);
+    // Lokale Vorschau aktualisieren
+    const oldVideoTrack = localStream.getVideoTracks()[0];
+    localStream.removeTrack(oldVideoTrack);
+    localStream.addTrack(newVideoTrack);
+    attachLocalVideo(localStream);
+    addSystem('// Kamera gewechselt: '+(currentFacing==='user'?'Vordere Kamera':'Hintere Kamera'));
+  }catch(e){addSystem('[Kamera-Wechsel fehlgeschlagen: '+e.message+']');}
+}
+
+// ── Video-Overlay zeigen ──────────────────────────────────────────────────────
+function showVideoCallOverlay(statusText){
+  $('video-call-overlay').style.display='block';
+  $('video-call-text').textContent=statusText;
+  $('call-bar').style.display='none';
+  // Platzhalter-Text
+  let waiting = $('video-waiting');
+  if(!waiting){waiting=document.createElement('div');waiting.className='video-waiting';waiting.id='video-waiting';waiting.textContent='> Warte auf Partner-Video…';$('video-call-overlay').appendChild(waiting);}
+}
+
+function attachLocalVideo(stream){
+  const localVid = $('local-video');
+  if(localVid){localVid.srcObject=stream;localVid.play().catch(()=>{});}
+}
+
+function attachRemoteVideo(stream){
+  const remoteVid = $('remote-video');
+  if(remoteVid){remoteVid.srcObject=stream;remoteVid.play().catch(()=>{});}
+  const waiting=$('video-waiting');if(waiting)waiting.remove();
+}
+
+// ── PeerConnection erstellen ──────────────────────────────────────────────────
 async function createPeerConnection(){
-  const servers=await getIceServers();
-  const pc=new RTCPeerConnection({iceServers:servers,iceCandidatePoolSize:10});
-  pc.onicecandidate=e=>{
+  const servers = await getIceServers();
+  const pc = new RTCPeerConnection({iceServers:servers, iceCandidatePoolSize:10});
+
+  pc.onicecandidate = e=>{
     if(e.candidate&&ws?.readyState===1)
       ws.send(JSON.stringify({type:'webrtc_ice',candidate:e.candidate}));
   };
-  pc.ontrack=e=>{
-    const ra=$('remote-audio');
-    if(ra){ra.srcObject=e.streams[0];ra.play().catch(()=>{});}
+
+  pc.ontrack = e=>{
+    const stream = e.streams[0];
+    if(isVideoCall){
+      // Video-Track → remote Video element
+      if(e.track.kind==='video') attachRemoteVideo(stream);
+      // Audio auch abspielen
+      const ra=$('remote-audio');if(ra){ra.srcObject=stream;ra.play().catch(()=>{});}
+    }else{
+      // Nur Audio
+      const ra=$('remote-audio');if(ra){ra.srcObject=stream;ra.play().catch(()=>{});}
+    }
   };
-  pc.onconnectionstatechange=()=>{
-    console.log('[WebRTC] state:', pc.connectionState);
+
+  pc.onconnectionstatechange = ()=>{
+    console.log('[WebRTC]',pc.connectionState);
     if(pc.connectionState==='connected'){
-      showCallBar('Verbunden');
-      $('call-status-dot').classList.add('active');
-      startCallTimer();addSystem('📞 Anruf verbunden — Ende-zu-Ende verschlüsselt (DTLS-SRTP)');
+      if(isVideoCall){
+        $('video-call-text').textContent='Verbunden';
+        $('video-call-dot').classList.add('active');
+        startVideoCallTimer();
+      }else{
+        showCallBar('Verbunden');
+        $('call-status-dot').classList.add('active');
+        startCallTimer();
+      }
+      addSystem(isVideoCall?'📹 Videoanruf verbunden.':'📞 Anruf verbunden.');
     }else if(['disconnected','failed'].includes(pc.connectionState)){
-      addSystem('📵 Anrufverbindung unterbrochen.');
-      // Kurz warten und prüfen ob reconnect klappt
       setTimeout(()=>{if(peerConn?.connectionState!=='connected')cleanupCall();},3000);
     }else if(pc.connectionState==='closed'){
       cleanupCall();
     }
   };
-  pc.onicegatheringstatechange=()=>{
-    if(pc.iceGatheringState==='complete')
-      console.log('[WebRTC] ICE gathering complete');
-  };
   return pc;
 }
+
+async function handleOffer(sdp){
+  if(!peerConn)return;
+  await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer = await peerConn.createAnswer();
+  await peerConn.setLocalDescription(answer);
+  ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+function startCallTimer(){
+  callSeconds=0;$('call-timer').style.display='inline';
+  callTimer=setInterval(()=>{callSeconds++;const m=Math.floor(callSeconds/60),s=callSeconds%60;$('call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;},1000);
+}
+function startVideoCallTimer(){
+  callSeconds=0;$('video-call-timer').style.display='inline';
+  callTimer=setInterval(()=>{callSeconds++;const m=Math.floor(callSeconds/60),s=callSeconds%60;$('video-call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;},1000);
+}
+
+// ── Auflegen ──────────────────────────────────────────────────────────────────
+function hangup(){
+  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
+  cleanupCall(); addSystem('📵 Anruf beendet.');
+}
+
+function cleanupCall(){
+  clearInterval(callTimer);callSeconds=0;
+  clearTimeout(window._callTimeout);
+  window._pendingOffer=null;window._callAnswered=false;
+  isVideoCall=false;currentFacing='user';videoMuted=false;audioMuted=false;
+  stopRingtone();
+  if(localStream)localStream.getTracks().forEach(t=>t.stop());localStream=null;
+  if(peerConn)peerConn.close();peerConn=null;
+  $('call-bar').style.display='none';
+  $('call-incoming').style.display='none';
+  $('video-call-overlay').style.display='none';
+  $('call-timer').style.display='none';
+  $('video-call-timer').style.display='none';
+  $('call-status-dot').classList.remove('active');
+  $('video-call-dot').classList.remove('active');
+  $('btn-mute').textContent='🎤';$('btn-vid-mute').textContent='🎤';
+  $('btn-vid-cam').textContent='📷';
+  const ra=$('remote-audio');if(ra)ra.srcObject=null;
+  const rv=$('remote-video');if(rv)rv.srcObject=null;
+  const lv=$('local-video');if(lv)lv.srcObject=null;
+}
+
+// ── Call Buttons ──────────────────────────────────────────────────────────────
+$('btn-call')      ?.addEventListener('click', ()=>startCall(false));
+$('btn-video-call')?.addEventListener('click', ()=>startCall(true));
+$('btn-hangup')    ?.addEventListener('click', hangup);
+$('btn-vid-hangup')?.addEventListener('click', hangup);
+$('btn-accept')    ?.addEventListener('click', answerCall);
+$('btn-reject')    ?.addEventListener('click', ()=>{
+  $('call-incoming').style.display='none'; stopRingtone();
+  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
+  addSystem('Anruf abgelehnt.');
+});
+
+// Stummschalten Audio
+$('btn-mute')?.addEventListener('click',()=>{
+  if(!localStream)return;
+  audioMuted=!audioMuted;localStream.getAudioTracks().forEach(t=>t.enabled=!audioMuted);
+  $('btn-mute').textContent=audioMuted?'🔇':'🎤';$('btn-mute').classList.toggle('muted',audioMuted);
+});
+$('btn-vid-mute')?.addEventListener('click',()=>{
+  if(!localStream)return;
+  audioMuted=!audioMuted;localStream.getAudioTracks().forEach(t=>t.enabled=!audioMuted);
+  $('btn-vid-mute').textContent=audioMuted?'🔇':'🎤';$('btn-vid-mute').classList.toggle('muted',audioMuted);
+});
+
+// Kamera an/aus
+$('btn-vid-cam')?.addEventListener('click',()=>{
+  if(!localStream)return;
+  videoMuted=!videoMuted;localStream.getVideoTracks().forEach(t=>t.enabled=!videoMuted);
+  $('btn-vid-cam').textContent=videoMuted?'🚫':'📷';
+  $('btn-vid-cam').classList.toggle('muted',videoMuted);
+});
+
+// Kamera wechseln (vorne ↔ hinten)
+$('btn-vid-flip')?.addEventListener('click', flipCamera);
+
+// Lautsprecher
+$('btn-speaker')?.addEventListener('click',()=>{
+  const ra=$('remote-audio');if(!ra)return;ra.muted=!ra.muted;
+  $('btn-speaker').textContent=ra.muted?'🔈':'🔊';
+});
+
+// Lokales Video antippen → Position wechseln (PiP)
+$('local-video')?.addEventListener('click',()=>{
+  $('local-video').classList.toggle('pip-topleft');
+});
 
 function showCallBar(statusText){
   $('call-bar').style.display='flex';
@@ -576,28 +889,6 @@ function cleanupCall(){
   const ra=$('remote-audio');if(ra){ra.srcObject=null;}
 }
 
-// Anruf-Buttons
-$('btn-call').addEventListener('click',startCall);
-$('btn-hangup').addEventListener('click',hangup);
-$('btn-accept').addEventListener('click',answerCall);
-$('btn-reject').addEventListener('click',()=>{
-  $('call-incoming').style.display='none';
-  stopRingtone();
-  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
-  addSystem('Anruf abgelehnt.');
-});
-$('btn-mute').addEventListener('click',()=>{
-  if(!localStream)return;
-  isMuted=!isMuted;
-  localStream.getAudioTracks().forEach(t=>t.enabled=!isMuted);
-  $('btn-mute').textContent=isMuted?'🔇':'🎤';
-  $('btn-mute').classList.toggle('muted',isMuted);
-});
-$('btn-speaker').addEventListener('click',()=>{
-  const ra=$('remote-audio');if(!ra)return;
-  ra.muted=!ra.muted;
-  $('btn-speaker').textContent=ra.muted?'🔈':'🔊';
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MEDIEN SENDEN
@@ -918,10 +1209,11 @@ function openWebSocket(){
 
       // ── WebRTC Signaling ──────────────────────────────────────────────────
       case 'webrtc_call':
-        // Eingehender Anruf — warten bis User annimmt, DANN ready senden
+        isVideoCall = !!msg.withVideo;
         $('call-incoming').style.display='block';
+        $('incoming-type-text').textContent = isVideoCall ? '📹 Eingehender Videoanruf…' : '📞 Eingehender Anruf…';
         playRingtone(true);vibrate([200,100,200,100,200]);
-        addSystem('📞 Eingehender Anruf — Annehmen oder Ablehnen');
+        addSystem(isVideoCall?'📹 Eingehender Videoanruf — Annehmen oder Ablehnen':'📞 Eingehender Anruf — Annehmen oder Ablehnen');
         break;
 
       case 'webrtc_ready':
@@ -1017,4 +1309,9 @@ function closedReason(code){
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-(async()=>{const h=await initFromFragment();if(!h)showScreen('home');})();
+(async()=>{
+  initWatermark();
+  initAudioOutput();
+  const h=await initFromFragment();
+  if(!h) showScreen('home');
+})();

@@ -154,6 +154,7 @@
     <div id="reconnect-banner"></div>
 
     <!-- Anruf-Bereich -->
+    <!-- Audio Anruf-Bar -->
     <div id="call-bar" style="display:none">
       <div id="call-status">
         <span id="call-status-dot" class="call-dot"></span>
@@ -161,22 +162,56 @@
         <span id="call-timer" style="display:none">0:00</span>
       </div>
       <div id="call-controls">
-        <button id="btn-mute"    class="call-btn" title="Stummschalten">🎤</button>
-        <button id="btn-speaker" class="call-btn" title="Lautsprecher">🔊</button>
-        <button id="btn-hangup"  class="call-btn call-btn-red" title="Auflegen">📵</button>
+        <button id="btn-mute"          class="call-btn" title="Stummschalten">🎤</button>
+        <button id="btn-audio-output"  class="call-btn" title="Ausgabe wählen">🔊</button>
+        <button id="btn-hangup"        class="call-btn call-btn-red" title="Auflegen">📵</button>
+      </div>
+      <!-- Audio Output Picker -->
+      <div id="audio-output-picker">
+        <div class="output-option active" data-sink="">📱 Earpiece / Standard</div>
+        <div class="output-option" data-sink="speaker">🔊 Lautsprecher</div>
+        <div class="output-option" id="output-headset" style="display:none">🎧 Headset</div>
+      </div>
+    </div>
+
+    <!-- Video-Anruf Overlay -->
+    <div id="video-call-overlay" style="display:none">
+      <video id="remote-video" autoplay playsinline></video>
+      <video id="local-video"  autoplay muted playsinline></video>
+      <div id="video-call-header">
+        <span id="video-call-dot" class="call-dot"></span>
+        <span id="video-call-text">Verbinde…</span>
+        <span id="video-call-timer" style="display:none">0:00</span>
+      </div>
+      <div id="video-call-controls">
+        <button id="btn-vid-mute"   class="call-btn" title="Mikrofon">🎤</button>
+        <button id="btn-vid-cam"    class="call-btn" title="Kamera">📷</button>
+        <button id="btn-vid-flip"   class="call-btn" title="Kamera wechseln">🔄</button>
+        <button id="btn-vid-hangup" class="call-btn call-btn-red call-btn-big" title="Auflegen">📵</button>
       </div>
     </div>
 
     <!-- Eingehender Anruf -->
     <div id="call-incoming" style="display:none">
-      <div class="incoming-text">📞 Eingehender Anruf…</div>
+      <div class="incoming-text" id="incoming-type-text">📞 Eingehender Anruf…</div>
       <div style="display:flex;gap:.75rem;margin-top:.75rem">
-        <button id="btn-reject" class="btn btn-danger" style="flex:1">ABLEHNEN</button>
+        <button id="btn-reject" class="btn btn-danger"  style="flex:1">ABLEHNEN</button>
         <button id="btn-accept" class="btn btn-primary" style="flex:1">✓ ANNEHMEN</button>
       </div>
     </div>
 
+    <!-- Anti-Screenshot Overlay — wird aktiv wenn Tab verlassen wird -->
+    <div id="screenshot-shield" style="display:none">
+      <div class="shield-content">
+        <div class="shield-icon">🔒</div>
+        <div class="shield-text">GESCHÜTZT</div>
+        <div class="shield-sub">Inhalt ausgeblendet</div>
+      </div>
+    </div>
+
     <div id="messages-wrap">
+      <!-- Wasserzeichen Canvas — liegt über Nachrichten -->
+      <canvas id="watermark-canvas"></canvas>
       <div id="messages"></div>
     </div>
 
@@ -260,7 +295,8 @@
       </div>
       <div class="input-main-row">
         <div class="input-icons-left">
-          <button id="btn-call"      class="icon-btn" title="Anruf starten">📞</button>
+          <button id="btn-call"      class="icon-btn" title="Audioanruf">📞</button>
+          <button id="btn-video-call" class="icon-btn" title="Videoanruf">📹</button>
           <button id="btn-sd-toggle" class="icon-btn" title="Selbstlöschend">⏱</button>
           <button id="btn-attach"    class="icon-btn" title="Bild/Datei">📎</button>
           <button id="btn-mic"       class="icon-btn" title="Sprachnachricht">🎙</button>

@@ -936,7 +936,9 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
   inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
-  background: #001a00;
+  background: #000;
+  /* iOS Fix: verhindert dass Video hinter Controls verschwindet */
+  z-index: 1;
 }
 
 #local-video {

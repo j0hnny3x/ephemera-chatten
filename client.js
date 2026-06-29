@@ -737,25 +737,21 @@ async function startCall(withVideo = false) {
 async function onCallReady() {
   clearTimeout(window._callTimeout);
   try {
-    // 1. Kamera/Mikrofon holen
+    // 1. PeerConnection ZUERST erstellen (vor getUserMedia — schneller)
+    peerConn = await createPeerConnection();
+
+    // 2. Kamera/Mikrofon holen
     localStream = await getMedia(isVideoCall, currentFacing);
     if (isVideoCall) attachLocalVideo(localStream);
 
-    // 2. PeerConnection erstellen
-    peerConn = await createPeerConnection();
-
-    // 3. Tracks ZUERST hinzufügen — wichtig für Video
+    // 3. Tracks hinzufügen — KEIN addTransceiver danach (würde doppeln)
     localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
 
-    // 4. Offer erstellen mit expliziten Transceivers für Video
-    if (isVideoCall) {
-      // Sicherstellen dass Video-Transceiver existiert
-      peerConn.addTransceiver('video', { direction: 'sendrecv' });
-    }
-
+    // 4. Offer erstellen — Browser handelt Transceivers automatisch korrekt
     const offer = await peerConn.createOffer();
     await peerConn.setLocalDescription(offer);
     ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
+
     if (isVideoCall) $('video-call-text').textContent = 'Verbinde…';
     else showCallBar('Verbinde…');
   } catch(e) {
@@ -766,33 +762,34 @@ async function onCallReady() {
 
 // ── Empfänger: Anruf annehmen ─────────────────────────────────────────────────
 async function answerCall() {
-  stopRingtone(); // ZUERST Klingelton stoppen
+  stopRingtone();
   $('call-incoming').style.display = 'none';
 
   if (isVideoCall) showVideoCallOverlay('Verbinde…');
   else showCallBar('Verbinde…');
   addSystem(isVideoCall ? '📹 Videoanruf wird verbunden…' : '📞 Anruf wird verbunden…');
 
-  // Bereit-Signal an Anrufer
+  // Bereit-Signal ZUERST senden — damit Anrufer sofort Offer schickt
   ws.send(JSON.stringify({ type: 'webrtc_ready' }));
 
   try {
-    // 1. Kamera/Mikrofon holen
+    // 1. PeerConnection erstellen
+    peerConn = await createPeerConnection();
+
+    // 2. Kamera/Mikrofon holen
     localStream = await getMedia(isVideoCall, currentFacing);
     if (isVideoCall) attachLocalVideo(localStream);
-
-    // 2. PeerConnection erstellen
-    peerConn = await createPeerConnection();
 
     // 3. Tracks hinzufügen
     localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
 
-    // 4. Offer verarbeiten wenn schon da, sonst warten
+    // 4. Offer verarbeiten — kommt entweder schon an oder wartet
     if (window._pendingOffer) {
       await handleOffer(window._pendingOffer);
       window._pendingOffer = null;
+      window._callAnswered = false;
     } else {
-      window._callAnswered = true; // Flag: Offer wenn es kommt sofort verarbeiten
+      window._callAnswered = true;
     }
   } catch(e) {
     addSystem('[Fehler beim Annehmen: ' + e.message + ']');
@@ -853,12 +850,24 @@ function showVideoCallOverlay(statusText){
 
 function attachLocalVideo(stream){
   const lv = $('local-video');
-  if(lv){ lv.srcObject=stream; lv.play().catch(()=>{}); }
+  if (!lv) return;
+  lv.srcObject = stream;
+  lv.muted     = true;   // Eigenes Bild immer stumm
+  lv.play().catch(err => {
+    console.warn('[local video play]', err);
+    setTimeout(() => lv.play().catch(()=>{}), 300);
+  });
 }
 
 function attachRemoteVideo(stream){
   const rv = $('remote-video');
-  if(rv){ rv.srcObject=stream; rv.play().catch(()=>{}); }
+  if (!rv) return;
+  rv.srcObject = stream;
+  rv.muted     = false;
+  rv.play().catch(err => {
+    console.warn('[remote video play]', err);
+    setTimeout(() => rv.play().catch(()=>{}), 500);
+  });
   $('video-waiting')?.remove();
 }
 
@@ -872,24 +881,42 @@ async function createPeerConnection(){
       ws.send(JSON.stringify({type:'webrtc_ice', candidate:e.candidate}));
   };
 
-  pc.ontrack = e=>{
-    const stream = e.streams[0] || new MediaStream([e.track]);
+  pc.ontrack = e => {
+    // Verwende immer e.streams[0] wenn vorhanden — das ist der vollständige Stream
+    // Wichtig: nicht new MediaStream([e.track]) — das bricht iOS
+    const stream = e.streams && e.streams[0] ? e.streams[0] : null;
+    if (!stream) return;
 
-    if(e.track.kind === 'video'){
-      // Video-Track angekommen → Partner hat Video
-      // Overlay auch beim Empfänger zeigen falls noch nicht sichtbar
+    if (e.track.kind === 'video') {
       isVideoCall = true;
+      // Overlay zeigen falls noch nicht sichtbar
       const overlay = $('video-call-overlay');
-      if(!overlay || overlay.style.display === 'none'){
+      if (!overlay || overlay.style.display === 'none') {
         showVideoCallOverlay('Verbunden');
       }
-      attachRemoteVideo(stream);
+      // Remote-Video setzen und abspielen
+      const rv = $('remote-video');
+      if (rv) {
+        rv.srcObject = stream;
+        rv.muted = false;  // Remote-Video nicht stumm
+        rv.play().catch(err => {
+          console.warn('[ontrack video play]', err);
+          // iOS braucht manchmal User-Geste — kurze Verzögerung
+          setTimeout(() => rv.play().catch(() => {}), 500);
+        });
+      }
+      $('video-waiting')?.remove();
     }
 
-    // Audio immer abspielen
-    if(e.track.kind === 'audio'){
+    if (e.track.kind === 'audio') {
       const ra = $('remote-audio');
-      if(ra){ ra.srcObject = stream; ra.play().catch(()=>{}); }
+      if (ra) {
+        ra.srcObject = stream;
+        ra.play().catch(err => {
+          console.warn('[ontrack audio play]', err);
+          setTimeout(() => ra.play().catch(() => {}), 500);
+        });
+      }
     }
   };
 

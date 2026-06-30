@@ -30,12 +30,14 @@ const myMsgs  = new Map();
 const sdTimers = new Map();
 
 // ── WebRTC State ──────────────────────────────────────────────────────────────
-let peerConn    = null;
-let localStream = null;
-let callTimer   = null;
-let callSeconds = 0;
-let isMuted     = false;
-let iceServers  = null;
+let peerConn              = null;
+let localStream           = null;
+let callTimer             = null;
+let callSeconds           = 0;
+let isMuted               = false;
+let iceServers            = null;
+let callReconnectAttempts = 0;
+let pendingIceCandidates  = [];
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -735,8 +737,7 @@ let currentFacing  = 'user';
 let videoMuted     = false;
 let audioMuted     = false;
 
-// Puffer für ICE-Kandidaten die ankommen BEVOR die PeerConnection bereit ist
-let pendingIceCandidates = [];
+// Puffer für ICE-Kandidaten (deklariert oben in WebRTC State)
 
 async function flushPendingIce(){
   if(!peerConn || !peerConn.remoteDescription) return;
@@ -956,6 +957,7 @@ async function createPeerConnection(){
   pc.onconnectionstatechange = ()=>{
     console.log('[WebRTC]', pc.connectionState);
     if(pc.connectionState === 'connected'){
+      cancelCallReconnect(); // Reconnect-Versuch erfolgreich
       if(isVideoCall){
         $('video-call-text').textContent = 'Verbunden';
         $('video-call-dot').classList.add('active');
@@ -966,10 +968,18 @@ async function createPeerConnection(){
         startCallTimer();
       }
       addSystem(isVideoCall ? '📹 Videoanruf verbunden.' : '📞 Anruf verbunden.');
-    } else if(['disconnected','failed'].includes(pc.connectionState)){
-      setTimeout(()=>{ if(peerConn?.connectionState !== 'connected') cleanupCall(); }, 3000);
+    } else if(pc.connectionState === 'disconnected'){
+      // Kurz warten ob es sich selbst erholt
+      setTimeout(()=>{
+        if(peerConn?.connectionState === 'disconnected' && !intentionalClose){
+          scheduleCallReconnect();
+        }
+      }, 2000);
+    } else if(pc.connectionState === 'failed'){
+      // Sofort Auto-Reconnect versuchen
+      if(!intentionalClose) scheduleCallReconnect();
     } else if(pc.connectionState === 'closed'){
-      cleanupCall();
+      if(!intentionalClose) cleanupCall();
     }
   };
   return pc;
@@ -986,26 +996,165 @@ async function handleOffer(sdp){
 }
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
-function startCallTimer(){
-  callSeconds=0;$('call-timer').style.display='inline';
-  callTimer=setInterval(()=>{callSeconds++;const m=Math.floor(callSeconds/60),s=callSeconds%60;$('call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;},1000);
+// ── Qualitäts-Monitoring (WebRTC getStats) ────────────────────────────────────
+let qualityInterval = null;
+let lastBytesReceived = 0;
+let callReconnectAttempts = 0;
+const MAX_CALL_RECONNECTS = 3;
+
+function startQualityMonitor() {
+  stopQualityMonitor();
+  lastBytesReceived = 0;
+  qualityInterval = setInterval(async () => {
+    if (!peerConn) return;
+    try {
+      const stats = await peerConn.getStats();
+      let rtt = null, packetsLost = 0, packetsReceived = 0, bytesReceived = 0;
+
+      stats.forEach(report => {
+        // Inbound-RTP: empfangene Pakete
+        if (report.type === 'inbound-rtp') {
+          packetsLost     += report.packetsLost     || 0;
+          packetsReceived += report.packetsReceived || 0;
+          bytesReceived   += report.bytesReceived   || 0;
+        }
+        // Candidate-Pair: RTT (Ping)
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
+          rtt = Math.round(report.currentRoundTripTime * 1000); // ms
+        }
+      });
+
+      // Qualität berechnen
+      const total       = packetsLost + packetsReceived;
+      const lossRate    = total > 0 ? packetsLost / total : 0;
+      const hasData     = bytesReceived > lastBytesReceived;
+      lastBytesReceived = bytesReceived;
+
+      let quality = 'good';
+      if (!hasData && callSeconds > 5)        quality = 'poor';   // kein Datenfluss
+      else if (lossRate > 0.1 || rtt > 300)   quality = 'poor';   // >10% Verlust oder >300ms
+      else if (lossRate > 0.03 || rtt > 150)  quality = 'medium'; // >3% Verlust oder >150ms
+
+      // UI aktualisieren
+      updateQualityUI(quality, rtt);
+
+    } catch {}
+  }, 2000); // alle 2 Sekunden
 }
-function startVideoCallTimer(){
-  callSeconds=0;$('video-call-timer').style.display='inline';
-  callTimer=setInterval(()=>{callSeconds++;const m=Math.floor(callSeconds/60),s=callSeconds%60;$('video-call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;},1000);
+
+function stopQualityMonitor() {
+  clearInterval(qualityInterval);
+  qualityInterval = null;
+}
+
+function updateQualityUI(quality, rtt) {
+  // Audio-Anruf
+  const aq = $('call-quality');
+  if (aq) { aq.className = `quality-indicator ${quality}`; aq.title = rtt ? `RTT: ${rtt}ms` : quality; }
+  // Video-Anruf
+  const vq = $('video-call-quality');
+  if (vq) { vq.className = `quality-indicator ${quality}`; vq.title = rtt ? `RTT: ${rtt}ms` : quality; }
+
+  // Bei schlechter Qualität warnen
+  if (quality === 'poor' && callSeconds > 8) {
+    const statusText = rtt ? `Schwache Verbindung (${rtt}ms)` : 'Schwache Verbindung';
+    if (isVideoCall) {
+      $('video-call-text').textContent = statusText;
+    }
+  } else if (quality === 'good') {
+    if (isVideoCall && $('video-call-text')?.textContent.includes('Schwache')) {
+      $('video-call-text').textContent = 'Verbunden';
+    }
+  }
+}
+
+// ── Auto-Reconnect bei Anrufabbruch ──────────────────────────────────────────
+let callReconnectTimer = null;
+
+function scheduleCallReconnect() {
+  if (intentionalClose || !roomId || callReconnectAttempts >= MAX_CALL_RECONNECTS) {
+    if (callReconnectAttempts >= MAX_CALL_RECONNECTS) {
+      addSystem('// Anruf konnte nicht wiederhergestellt werden.');
+      cleanupCall();
+    }
+    return;
+  }
+
+  callReconnectAttempts++;
+  const delay = callReconnectAttempts * 2000; // 2s, 4s, 6s
+
+  // Banner zeigen
+  const banner = $('call-reconnect-banner');
+  if (banner) banner.classList.add('visible');
+  if (isVideoCall) {
+    $('video-call-text').textContent = `Verbindung getrennt — Versuch ${callReconnectAttempts}/${MAX_CALL_RECONNECTS}…`;
+  } else {
+    $('call-status-text').textContent = `Verbindung getrennt — Wiederverbinde…`;
+  }
+
+  addSystem(`// Anruf unterbrochen — Wiederverbindungsversuch ${callReconnectAttempts}/${MAX_CALL_RECONNECTS}…`);
+
+  callReconnectTimer = setTimeout(async () => {
+    if (!peerConn || !partnerConnected) { cleanupCall(); return; }
+    try {
+      // Neues Offer erstellen und senden
+      const offer = await peerConn.createOffer({ iceRestart: true }); // iceRestart = neuer ICE-Handshake
+      await peerConn.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
+      const banner = $('call-reconnect-banner');
+      if (banner) banner.classList.remove('visible');
+    } catch(e) {
+      addSystem('[Reconnect fehlgeschlagen: ' + e.message + ']');
+      cleanupCall();
+    }
+  }, delay);
+}
+
+function cancelCallReconnect() {
+  clearTimeout(callReconnectTimer);
+  callReconnectTimer = null;
+  const banner = $('call-reconnect-banner');
+  if (banner) banner.classList.remove('visible');
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+function startCallTimer() {
+  callSeconds = 0; callReconnectAttempts = 0;
+  $('call-timer').style.display = 'inline';
+  callTimer = setInterval(() => {
+    callSeconds++;
+    const m = Math.floor(callSeconds/60), s = callSeconds%60;
+    $('call-timer').textContent = `${m}:${String(s).padStart(2,'0')}`;
+  }, 1000);
+  startQualityMonitor();
+}
+
+function startVideoCallTimer() {
+  callSeconds = 0; callReconnectAttempts = 0;
+  $('video-call-timer').style.display = 'inline';
+  callTimer = setInterval(() => {
+    callSeconds++;
+    const m = Math.floor(callSeconds/60), s = callSeconds%60;
+    $('video-call-timer').textContent = `${m}:${String(s).padStart(2,'0')}`;
+  }, 1000);
+  startQualityMonitor();
 }
 
 // ── Auflegen ──────────────────────────────────────────────────────────────────
-function hangup(){
-  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
-  cleanupCall(); addSystem('📵 Anruf beendet.');
+function hangup() {
+  ws?.readyState===1 && ws.send(JSON.stringify({type:'webrtc_hangup'}));
+  cleanupCall();
+  addSystem('📵 Anruf beendet.');
 }
 
 function cleanupCall(){
   clearInterval(callTimer); callSeconds=0;
   clearTimeout(window._callTimeout);
+  cancelCallReconnect();
+  stopQualityMonitor();
   window._pendingOffer=null; window._callAnswered=false;
   pendingIceCandidates=[];
+  callReconnectAttempts=0;
   isVideoCall=false; currentFacing='user'; videoMuted=false; audioMuted=false;
   stopRingtone();
 

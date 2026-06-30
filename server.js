@@ -82,6 +82,16 @@ app.get('/api/room/:id', (req, res) => {
   res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash, sealed: room.sealed, clientCount: room.clients.size });
 });
 
+// Health-Check für Uptime-Monitoring (z.B. UptimeRobot) — hält Server wach
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    rooms: rooms.size,
+    timestamp: Date.now(),
+  });
+});
+
 app.get('/api/turn', (req, res) => {
   res.json({ iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },

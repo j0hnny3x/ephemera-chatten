@@ -718,45 +718,75 @@ function initTray() {
 // ══════════════════════════════════════════════════════════════════════════════
 async function getIceServers(){
   if(iceServers)return iceServers;
-  try{const r=await fetch('/api/turn');iceServers=(await r.json()).iceServers;}
-  catch{iceServers=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];}
+  try{
+    const r=await fetch('/api/turn');
+    iceServers=(await r.json()).iceServers;
+  }catch{
+    iceServers=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+  }
   return iceServers;
 }
 
+// ICE-Server VORAB laden beim Start — verhindert Verzögerung beim ersten Anruf
+getIceServers();
+
 let isVideoCall    = false;
-let currentFacing  = 'user';  // 'user' = vorne, 'environment' = hinten
+let currentFacing  = 'user';
 let videoMuted     = false;
 let audioMuted     = false;
+
+// Puffer für ICE-Kandidaten die ankommen BEVOR die PeerConnection bereit ist
+let pendingIceCandidates = [];
+
+async function flushPendingIce(){
+  if(!peerConn || !peerConn.remoteDescription) return;
+  const queued = [...pendingIceCandidates];
+  pendingIceCandidates = [];
+  for(const c of queued){
+    try{ await peerConn.addIceCandidate(new RTCIceCandidate(c)); }
+    catch(e){ console.warn('[ICE flush]', e.message); }
+  }
+}
 
 // ── Anruf starten (Anrufer) ──────────────────────────────────────────────────
 async function startCall(withVideo = false) {
   if (!partnerConnected) { addSystem('// Partner muss erst online sein.'); return; }
   if (peerConn) { addSystem('// Bereits in einem Anruf.'); return; }
   isVideoCall = withVideo;
+  pendingIceCandidates = [];
+  window._pendingOffer = null;
+  window._callAnswered = false;
+
   if (withVideo) showVideoCallOverlay('Warte auf Annahme…');
   else showCallBar('Warte auf Annahme…');
+
   ws.send(JSON.stringify({ type: 'webrtc_call', withVideo }));
   addSystem(withVideo ? '📹 Videoanruf gestartet…' : '📞 Audioanruf gestartet…');
+
   window._callTimeout = setTimeout(() => {
     if (!peerConn) { cleanupCall(); addSystem('// Anruf nicht angenommen.'); }
   }, 30000);
+}
+
+// ── Gemeinsame Vorbereitung: Media holen + PeerConnection bauen ─────────────
+async function prepareCallResources(){
+  // 1. Media ZUERST anfragen (braucht oft User-Geste-Kontext, sollte früh passieren)
+  localStream = await getMedia(isVideoCall, currentFacing);
+  if (isVideoCall) attachLocalVideo(localStream);
+
+  // 2. PeerConnection erstellen
+  peerConn = await createPeerConnection();
+
+  // 3. Tracks hinzufügen
+  localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
 }
 
 // ── Anrufer: Partner bereit → Offer senden ───────────────────────────────────
 async function onCallReady() {
   clearTimeout(window._callTimeout);
   try {
-    // 1. PeerConnection ZUERST erstellen (vor getUserMedia — schneller)
-    peerConn = await createPeerConnection();
+    await prepareCallResources();
 
-    // 2. Kamera/Mikrofon holen
-    localStream = await getMedia(isVideoCall, currentFacing);
-    if (isVideoCall) attachLocalVideo(localStream);
-
-    // 3. Tracks hinzufügen — KEIN addTransceiver danach (würde doppeln)
-    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
-
-    // 4. Offer erstellen — Browser handelt Transceivers automatisch korrekt
     const offer = await peerConn.createOffer();
     await peerConn.setLocalDescription(offer);
     ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
@@ -773,33 +803,27 @@ async function onCallReady() {
 async function answerCall() {
   stopRingtone();
   $('call-incoming').style.display = 'none';
+  pendingIceCandidates = [];
 
   if (isVideoCall) showVideoCallOverlay('Verbinde…');
   else showCallBar('Verbinde…');
   addSystem(isVideoCall ? '📹 Videoanruf wird verbunden…' : '📞 Anruf wird verbunden…');
 
-  // Bereit-Signal ZUERST senden — damit Anrufer sofort Offer schickt
-  ws.send(JSON.stringify({ type: 'webrtc_ready' }));
-
   try {
-    // 1. PeerConnection erstellen
-    peerConn = await createPeerConnection();
+    // Ressourcen VOR dem 'ready'-Signal vorbereiten — so ist PeerConnection
+    // garantiert fertig bevor der Offer ankommen kann
+    await prepareCallResources();
 
-    // 2. Kamera/Mikrofon holen
-    localStream = await getMedia(isVideoCall, currentFacing);
-    if (isVideoCall) attachLocalVideo(localStream);
+    // Jetzt erst Bereit-Signal senden
+    ws.send(JSON.stringify({ type: 'webrtc_ready' }));
 
-    // 3. Tracks hinzufügen
-    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
-
-    // 4. Offer verarbeiten — kommt entweder schon an oder wartet
+    // Falls Offer schon angekommen ist (sehr unwahrscheinlich bei dieser Reihenfolge)
     if (window._pendingOffer) {
       await handleOffer(window._pendingOffer);
       window._pendingOffer = null;
-      window._callAnswered = false;
-    } else {
-      window._callAnswered = true;
     }
+    window._callAnswered = true;
+
   } catch(e) {
     addSystem('[Fehler beim Annehmen: ' + e.message + ']');
     ws.send(JSON.stringify({ type: 'webrtc_hangup' }));
@@ -954,6 +978,8 @@ async function createPeerConnection(){
 async function handleOffer(sdp){
   if(!peerConn)return;
   await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
+  // Gepufferte ICE-Kandidaten jetzt verarbeiten — remoteDescription ist gesetzt
+  await flushPendingIce();
   const answer = await peerConn.createAnswer();
   await peerConn.setLocalDescription(answer);
   ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
@@ -979,6 +1005,7 @@ function cleanupCall(){
   clearInterval(callTimer); callSeconds=0;
   clearTimeout(window._callTimeout);
   window._pendingOffer=null; window._callAnswered=false;
+  pendingIceCandidates=[];
   isVideoCall=false; currentFacing='user'; videoMuted=false; audioMuted=false;
   stopRingtone();
 
@@ -1446,26 +1473,35 @@ function openWebSocket(){
         break;
 
       case 'webrtc_offer':
-        if(window._callAnswered&&peerConn){
-          // Wir haben schon angenommen und PeerConnection ist bereit
+        // Da answerCall() Ressourcen VOR 'webrtc_ready' vorbereitet,
+        // ist peerConn hier praktisch immer schon bereit.
+        if(peerConn){
           await handleOffer(msg.sdp);
-          window._callAnswered=false;
         }else{
-          // Noch nicht angenommen → speichern
+          // Fallback: Offer kam überraschend früh an → puffern
           window._pendingOffer=msg.sdp;
         }
         break;
 
       case 'webrtc_answer':
-        if(peerConn&&peerConn.signalingState==='have-local-offer'){
-          try{await peerConn.setRemoteDescription(new RTCSessionDescription(msg.sdp));}
-          catch(e){addSystem('[Anruf-Fehler: '+e.message+']');}
+        if(peerConn && peerConn.signalingState==='have-local-offer'){
+          try{
+            await peerConn.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            await flushPendingIce(); // Gepufferte Kandidaten jetzt verarbeiten
+          }catch(e){addSystem('[Anruf-Fehler: '+e.message+']');}
         }break;
 
       case 'webrtc_ice':
-        if(peerConn&&msg.candidate){
-          try{await peerConn.addIceCandidate(new RTCIceCandidate(msg.candidate));}
-          catch(e){console.warn('[ICE]',e.message);}
+        if(msg.candidate){
+          if(peerConn && peerConn.remoteDescription){
+            // Sofort verarbeiten — remoteDescription ist gesetzt
+            try{ await peerConn.addIceCandidate(new RTCIceCandidate(msg.candidate)); }
+            catch(e){ console.warn('[ICE]',e.message); }
+          }else{
+            // PeerConnection noch nicht bereit ODER remoteDescription fehlt noch
+            // → puffern statt verwerfen
+            pendingIceCandidates.push(msg.candidate);
+          }
         }break;
 
       case 'webrtc_hangup':

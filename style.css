@@ -530,18 +530,21 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
   flex: 1;
   background: var(--surface);
   border: 1px solid var(--border2);
-  border-radius: 22px; /* WhatsApp-Style rund */
+  border-radius: 22px;
   color: var(--text-bright);
   font-family: var(--mono);
   font-size: 1rem;
   padding: .6rem 1rem;
   resize: none;
+  overflow: hidden;   /* verhindert Scroll-Pfeile im Browser */
   outline: none;
   transition: border-color .15s;
   min-height: 44px;
   max-height: 120px;
   line-height: 1.4;
   caret-color: var(--matrix);
+  -webkit-appearance: none; /* iOS */
+  appearance: none;
 }
 #msg-input:focus { border-color: var(--matrix); }
 #msg-input::placeholder { color: var(--muted); }
@@ -1232,17 +1235,16 @@ audio { width: 100%; height: 32px; accent-color: var(--matrix); }
 
 /* Auf Tablet: Tray inline statt ausfahrbar */
 @media (min-width: 600px) {
-  .action-tray { display: none; }
+  /* Auf Desktop/Tablet: Tray immer ausgeklappt als feste Leiste */
+  .action-tray {
+    max-height: 110px !important;
+    opacity: 1 !important;
+  }
+  .action-tray .tray-handle { display: none; }
+  .tray-icons { padding: .3rem .5rem .4rem; }
+  .tray-btn { width: 44px; height: 44px; border-radius: 12px; font-size: 1.2rem; }
+  .tray-label { font-size: .6rem; }
+  /* Toggle-Button verstecken auf Desktop */
   .tray-toggle-btn { display: none !important; }
-  .input-main-row {
-    position: relative;
-  }
-  /* Tablet zeigt alle Buttons inline */
-  .input-main-row::before {
-    display: none;
-  }
-  #chat-bottom::before {
-    content: '';
-    display: flex;
-  }
+  .input-main-row { position: relative; }
 }

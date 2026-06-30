@@ -623,29 +623,38 @@ $('font-down').addEventListener('click',()=>applyFontSize(fontSize-1));
 
 // ── Action Tray (ausziehbare Icon-Leiste) ─────────────────────────────────────
 function initTray() {
-  const tray       = $('action-tray');
-  const toggleBtn  = $('btn-tray-toggle');
-  const handle     = $('tray-handle');
+  const tray      = $('action-tray');
+  const toggleBtn = $('btn-tray-toggle');
+  const handle    = $('tray-handle');
   if (!tray || !toggleBtn) return;
+
+  // Auf Desktop (≥600px) immer offen
+  const isDesktop = () => window.innerWidth >= 600;
 
   function openTray() {
     tray.classList.add('expanded');
     toggleBtn.classList.add('open');
-    toggleBtn.textContent = '＋'; // bleibt + aber rotiert via CSS
   }
   function closeTray() {
+    if (isDesktop()) return; // Desktop: nie schließen
     tray.classList.remove('expanded');
     toggleBtn.classList.remove('open');
   }
   function toggleTray() {
+    if (isDesktop()) return;
     tray.classList.contains('expanded') ? closeTray() : openTray();
   }
 
+  // Beim Start: Desktop → offen, Mobile → geschlossen
+  if (isDesktop()) openTray();
+
+  window.addEventListener('resize', () => {
+    if (isDesktop()) openTray();
+  });
+
   toggleBtn.addEventListener('click', toggleTray);
   handle?.addEventListener('click', toggleTray);
-
-  // Tray schließen wenn Nachricht getippt wird
-  $('msg-input').addEventListener('focus', closeTray);
+  $('msg-input').addEventListener('focus', () => { if (!isDesktop()) closeTray(); });
 
   // Tray-Buttons mit Aktionen verbinden
   $('btn-call')      ?.addEventListener('click', () => { closeTray(); startCall(false); });

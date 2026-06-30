@@ -995,11 +995,9 @@ async function handleOffer(sdp){
   ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
 }
 
-// ── Timer ─────────────────────────────────────────────────────────────────────
 // ── Qualitäts-Monitoring (WebRTC getStats) ────────────────────────────────────
 let qualityInterval = null;
 let lastBytesReceived = 0;
-let callReconnectAttempts = 0;
 const MAX_CALL_RECONNECTS = 3;
 
 function startQualityMonitor() {
@@ -1271,22 +1269,7 @@ function showCallBar(statusText){
   $('call-incoming').style.display='none';
 }
 
-function startCallTimer(){
-  callSeconds=0;$('call-timer').style.display='inline';
-  callTimer=setInterval(()=>{
-    callSeconds++;
-    const m=Math.floor(callSeconds/60),s=callSeconds%60;
-    $('call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;
-  },1000);
-}
-
-function hangup(){
-  ws?.readyState===1&&ws.send(JSON.stringify({type:'webrtc_hangup'}));
-  cleanupCall();
-  addSystem('📵 Anruf beendet.');
-}
-
-// cleanupCall ist weiter oben definiert
+// startCallTimer, hangup, cleanupCall sind weiter oben definiert
 
 
 // ══════════════════════════════════════════════════════════════════════════════

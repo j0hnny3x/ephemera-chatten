@@ -317,8 +317,6 @@ function playPing() {
 }
 
 // ── Klingelton ────────────────────────────────────────────────────────────────
-let _ringCtx = null;
-let _ringInterval = null;
 
 function playRingtone() {
   stopRingtone(); // Sicherstellen dass kein alter läuft
@@ -719,430 +717,355 @@ function initTray() {
 // WebRTC — Audio & Video Anruf
 // ══════════════════════════════════════════════════════════════════════════════
 async function getIceServers(){
-  if(iceServers)return iceServers;
+  if(iceServers) return iceServers;
   try{
-    const r=await fetch('/api/turn');
-    iceServers=(await r.json()).iceServers;
+    const r = await fetch('/api/turn');
+    iceServers = (await r.json()).iceServers;
   }catch{
-    iceServers=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+    iceServers = [
+      {urls:'stun:stun.l.google.com:19302'},
+      {urls:'stun:stun1.l.google.com:19302'},
+    ];
   }
   return iceServers;
 }
-
-// ICE-Server VORAB laden beim Start — verhindert Verzögerung beim ersten Anruf
+// ICE-Server sofort vorladen
 getIceServers();
 
-let isVideoCall    = false;
-let currentFacing  = 'user';
-let videoMuted     = false;
-let audioMuted     = false;
+let isVideoCall   = false;
+let currentFacing = 'user';
+let videoMuted    = false;
+let audioMuted    = false;
 
-// Puffer für ICE-Kandidaten (deklariert oben in WebRTC State)
+// ── Klingelton ────────────────────────────────────────────────────────────────
+// iOS erlaubt AudioContext nur nach User-Geste.
+// Wir entsperren den Context beim ersten Button-Klick und spielen dann ab.
+let _audioCtxUnlocked = false;
+let _ringCtx = null;
+let _ringInterval = null;
 
-async function flushPendingIce(){
-  if(!peerConn || !peerConn.remoteDescription) return;
-  const queued = [...pendingIceCandidates];
-  pendingIceCandidates = [];
-  for(const c of queued){
-    try{ await peerConn.addIceCandidate(new RTCIceCandidate(c)); }
-    catch(e){ console.warn('[ICE flush]', e.message); }
-  }
+function unlockAudio(){
+  // Beim ersten Tap einen leeren AudioContext erzeugen — entsperrt iOS Audio
+  if(_audioCtxUnlocked) return;
+  _audioCtxUnlocked = true;
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1,1,22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start(0);
+    ctx.close();
+  }catch{}
+}
+// Audio beim ersten Antippen überall entsperren
+document.addEventListener('touchstart', unlockAudio, {once:true, passive:true});
+document.addEventListener('click',      unlockAudio, {once:true});
+
+function playRingtone(){
+  stopRingtone();
+  try{
+    _ringCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const ring = () => {
+      if(!_ringCtx) return;
+      [[880,0,0.15],[660,0.18,0.12]].forEach(([freq,delay,dur])=>{
+        try{
+          const osc  = _ringCtx.createOscillator();
+          const gain = _ringCtx.createGain();
+          osc.connect(gain); gain.connect(_ringCtx.destination);
+          osc.frequency.setValueAtTime(freq, _ringCtx.currentTime + delay);
+          gain.gain.setValueAtTime(0.3,   _ringCtx.currentTime + delay);
+          gain.gain.exponentialRampToValueAtTime(0.001, _ringCtx.currentTime + delay + dur);
+          osc.start(_ringCtx.currentTime + delay);
+          osc.stop(_ringCtx.currentTime  + delay + dur);
+        }catch{}
+      });
+    };
+    ring();
+    _ringInterval = setInterval(ring, 1600);
+  }catch(e){ console.warn('[ringtone]', e); }
 }
 
-// ── Anruf starten (Anrufer) ──────────────────────────────────────────────────
-async function startCall(withVideo = false) {
-  if (!partnerConnected) { addSystem('// Partner muss erst online sein.'); return; }
-  if (peerConn) { addSystem('// Bereits in einem Anruf.'); return; }
+function stopRingtone(){
+  clearInterval(_ringInterval); _ringInterval = null;
+  try{ _ringCtx?.close(); }catch{}
+  _ringCtx = null;
+}
+
+// ── Anruf starten ─────────────────────────────────────────────────────────────
+async function startCall(withVideo = false){
+  if(!partnerConnected){ addSystem('// Partner muss erst online sein.'); return; }
+  if(peerConn){ addSystem('// Bereits in einem Anruf.'); return; }
+
   isVideoCall = withVideo;
   pendingIceCandidates = [];
   window._pendingOffer = null;
-  window._callAnswered = false;
 
-  if (withVideo) showVideoCallOverlay('Warte auf Annahme…');
+  if(withVideo) showVideoCallOverlay('Warte auf Annahme…');
   else showCallBar('Warte auf Annahme…');
 
-  ws.send(JSON.stringify({ type: 'webrtc_call', withVideo }));
-  addSystem(withVideo ? '📹 Videoanruf gestartet…' : '📞 Audioanruf gestartet…');
+  ws.send(JSON.stringify({type:'webrtc_call', withVideo}));
+  addSystem(withVideo ? '📹 Videoanruf…' : '📞 Audioanruf…');
 
-  window._callTimeout = setTimeout(() => {
-    if (!peerConn) { cleanupCall(); addSystem('// Anruf nicht angenommen.'); }
+  window._callTimeout = setTimeout(()=>{
+    if(!peerConn){ cleanupCall(); addSystem('// Nicht angenommen.'); }
   }, 30000);
 }
 
-// ── Gemeinsame Vorbereitung: Media holen + PeerConnection bauen ─────────────
-async function prepareCallResources(){
-  // 1. Media ZUERST anfragen (braucht oft User-Geste-Kontext, sollte früh passieren)
-  localStream = await getMedia(isVideoCall, currentFacing);
-  if (isVideoCall) attachLocalVideo(localStream);
-
-  // 2. PeerConnection erstellen
-  peerConn = await createPeerConnection();
-
-  // 3. Tracks hinzufügen
-  localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
-}
-
-// ── Anrufer: Partner bereit → Offer senden ───────────────────────────────────
-async function onCallReady() {
+// ── Anrufer: Partner hat angenommen ──────────────────────────────────────────
+async function onCallReady(){
   clearTimeout(window._callTimeout);
-  try {
-    await prepareCallResources();
+  try{
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: isVideoCall ? {facingMode: currentFacing, width:{ideal:1280}, height:{ideal:720}} : false
+    });
+    if(isVideoCall) attachLocalVideo(localStream);
+
+    peerConn = await createPeerConnection();
+    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
 
     const offer = await peerConn.createOffer();
     await peerConn.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
+    ws.send(JSON.stringify({type:'webrtc_offer', sdp: peerConn.localDescription}));
 
-    if (isVideoCall) $('video-call-text').textContent = 'Verbinde…';
+    if(isVideoCall) $('video-call-text').textContent = 'Verbinde…';
     else showCallBar('Verbinde…');
-  } catch(e) {
-    addSystem('[Fehler beim Anruf: ' + e.message + ']');
+  }catch(e){
+    addSystem('[Anruf-Fehler: ' + e.message + ']');
     cleanupCall();
   }
 }
 
 // ── Empfänger: Anruf annehmen ─────────────────────────────────────────────────
-async function answerCall() {
+async function answerCall(){
   stopRingtone();
   $('call-incoming').style.display = 'none';
   pendingIceCandidates = [];
+  window._pendingOffer = null;
 
-  if (isVideoCall) showVideoCallOverlay('Verbinde…');
+  if(isVideoCall) showVideoCallOverlay('Verbinde…');
   else showCallBar('Verbinde…');
-  addSystem(isVideoCall ? '📹 Videoanruf wird verbunden…' : '📞 Anruf wird verbunden…');
+  addSystem(isVideoCall ? '📹 Verbinde…' : '📞 Verbinde…');
 
-  try {
-    // Ressourcen VOR dem 'ready'-Signal vorbereiten — so ist PeerConnection
-    // garantiert fertig bevor der Offer ankommen kann
-    await prepareCallResources();
+  try{
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: isVideoCall ? {facingMode: currentFacing, width:{ideal:1280}, height:{ideal:720}} : false
+    });
+    if(isVideoCall) attachLocalVideo(localStream);
 
-    // Jetzt erst Bereit-Signal senden
-    ws.send(JSON.stringify({ type: 'webrtc_ready' }));
+    peerConn = await createPeerConnection();
+    localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
 
-    // Falls Offer schon angekommen ist (sehr unwahrscheinlich bei dieser Reihenfolge)
-    if (window._pendingOffer) {
-      await handleOffer(window._pendingOffer);
-      window._pendingOffer = null;
-    }
-    window._callAnswered = true;
+    // Bereit-Signal NACH PeerConnection-Setup senden
+    ws.send(JSON.stringify({type:'webrtc_ready'}));
 
-  } catch(e) {
-    addSystem('[Fehler beim Annehmen: ' + e.message + ']');
-    ws.send(JSON.stringify({ type: 'webrtc_hangup' }));
+  }catch(e){
+    addSystem('[Annehmen-Fehler: ' + e.message + ']');
+    ws.send(JSON.stringify({type:'webrtc_hangup'}));
     cleanupCall();
   }
 }
 
-// ── Media abrufen ─────────────────────────────────────────────────────────────
-async function getMedia(video, facing='user'){
-  const constraints = {
-    audio: true,
-    video: video ? { facingMode: facing, width:{ideal:1280}, height:{ideal:720} } : false
-  };
-  return navigator.mediaDevices.getUserMedia(constraints);
-}
-
-// ── Kamera wechseln (vorne ↔ hinten) ─────────────────────────────────────────
-async function flipCamera(){
-  if(!localStream||!isVideoCall||!peerConn)return;
-  currentFacing = currentFacing === 'user' ? 'environment' : 'user';
-  try{
-    // Alten Video-Track stoppen
-    localStream.getVideoTracks().forEach(t=>t.stop());
-    // Neuen Track mit anderer Kamera
-    const newStream = await getMedia(true, currentFacing);
-    const newVideoTrack = newStream.getVideoTracks()[0];
-    // In PeerConnection ersetzen ohne Reconnect
-    const sender = peerConn.getSenders().find(s=>s.track?.kind==='video');
-    if(sender) await sender.replaceTrack(newVideoTrack);
-    // Lokale Vorschau aktualisieren
-    const oldVideoTrack = localStream.getVideoTracks()[0];
-    localStream.removeTrack(oldVideoTrack);
-    localStream.addTrack(newVideoTrack);
-    attachLocalVideo(localStream);
-    addSystem('// Kamera gewechselt: '+(currentFacing==='user'?'Vordere Kamera':'Hintere Kamera'));
-  }catch(e){addSystem('[Kamera-Wechsel fehlgeschlagen: '+e.message+']');}
-}
-
-// ── Video-Overlay zeigen ──────────────────────────────────────────────────────
-function showVideoCallOverlay(statusText){
-  const overlay = $('video-call-overlay');
-  overlay.style.display   = 'block';
-  overlay.style.opacity   = '1';
-  overlay.style.pointerEvents = '';
-  $('video-call-text').textContent = statusText;
-  $('call-bar').style.display = 'none';
-  $('call-incoming').style.display = 'none';
-  // Platzhalter
-  let waiting = $('video-waiting');
-  if(!waiting){
-    waiting = document.createElement('div');
-    waiting.className='video-waiting'; waiting.id='video-waiting';
-    waiting.textContent='> Warte auf Partner-Video…';
-    overlay.appendChild(waiting);
+// ── handleOffer ───────────────────────────────────────────────────────────────
+async function handleOffer(sdp){
+  if(!peerConn) return;
+  await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
+  // Gepufferte ICE-Kandidaten jetzt anwenden
+  const queued = [...pendingIceCandidates]; pendingIceCandidates = [];
+  for(const c of queued){
+    try{ await peerConn.addIceCandidate(new RTCIceCandidate(c)); }catch{}
   }
+  const answer = await peerConn.createAnswer();
+  await peerConn.setLocalDescription(answer);
+  ws.send(JSON.stringify({type:'webrtc_answer', sdp: peerConn.localDescription}));
 }
 
-function attachLocalVideo(stream){
-  const lv = $('local-video');
-  if (!lv) return;
-  lv.srcObject = stream;
-  lv.muted     = true;   // Eigenes Bild immer stumm
-  lv.play().catch(err => {
-    console.warn('[local video play]', err);
-    setTimeout(() => lv.play().catch(()=>{}), 300);
-  });
-}
-
-function attachRemoteVideo(stream){
-  const rv = $('remote-video');
-  if (!rv) return;
-  rv.srcObject = stream;
-  rv.muted     = false;
-  rv.play().catch(err => {
-    console.warn('[remote video play]', err);
-    setTimeout(() => rv.play().catch(()=>{}), 500);
-  });
-  $('video-waiting')?.remove();
-}
-
-// ── PeerConnection erstellen ──────────────────────────────────────────────────
+// ── PeerConnection ────────────────────────────────────────────────────────────
 async function createPeerConnection(){
   const servers = await getIceServers();
-  const pc = new RTCPeerConnection({iceServers:servers, iceCandidatePoolSize:10});
+  const pc = new RTCPeerConnection({iceServers: servers, iceCandidatePoolSize: 10});
 
-  pc.onicecandidate = e=>{
-    if(e.candidate && ws?.readyState===1)
-      ws.send(JSON.stringify({type:'webrtc_ice', candidate:e.candidate}));
+  pc.onicecandidate = e => {
+    if(e.candidate && ws?.readyState === 1)
+      ws.send(JSON.stringify({type:'webrtc_ice', candidate: e.candidate}));
   };
 
   pc.ontrack = e => {
-    // Verwende immer e.streams[0] wenn vorhanden — das ist der vollständige Stream
-    // Wichtig: nicht new MediaStream([e.track]) — das bricht iOS
-    const stream = e.streams && e.streams[0] ? e.streams[0] : null;
-    if (!stream) return;
+    const stream = e.streams?.[0];
+    if(!stream) return;
 
-    if (e.track.kind === 'video') {
+    if(e.track.kind === 'video'){
       isVideoCall = true;
-      // Overlay zeigen falls noch nicht sichtbar
-      const overlay = $('video-call-overlay');
-      if (!overlay || overlay.style.display === 'none') {
+      // Video-Overlay beim Empfänger öffnen falls noch nicht offen
+      if($('video-call-overlay').style.display !== 'block')
         showVideoCallOverlay('Verbunden');
-      }
-      // Remote-Video setzen und abspielen
+
       const rv = $('remote-video');
-      if (rv) {
+      if(rv){
         rv.srcObject = stream;
-        rv.muted = false;  // Remote-Video nicht stumm
-        rv.play().catch(err => {
-          console.warn('[ontrack video play]', err);
-          // iOS braucht manchmal User-Geste — kurze Verzögerung
-          setTimeout(() => rv.play().catch(() => {}), 500);
-        });
+        rv.play().catch(()=> setTimeout(()=> rv.play().catch(()=>{}), 500));
       }
       $('video-waiting')?.remove();
     }
 
-    if (e.track.kind === 'audio') {
+    if(e.track.kind === 'audio'){
       const ra = $('remote-audio');
-      if (ra) {
+      if(ra){
         ra.srcObject = stream;
-        ra.play().catch(err => {
-          console.warn('[ontrack audio play]', err);
-          setTimeout(() => ra.play().catch(() => {}), 500);
-        });
+        ra.play().catch(()=> setTimeout(()=> ra.play().catch(()=>{}), 500));
       }
     }
   };
 
-  pc.onconnectionstatechange = ()=>{
+  pc.onconnectionstatechange = () => {
     console.log('[WebRTC]', pc.connectionState);
     if(pc.connectionState === 'connected'){
-      cancelCallReconnect(); // Reconnect-Versuch erfolgreich
       if(isVideoCall){
         $('video-call-text').textContent = 'Verbunden';
         $('video-call-dot').classList.add('active');
         startVideoCallTimer();
-      } else {
+      }else{
         showCallBar('Verbunden');
         $('call-status-dot').classList.add('active');
         startCallTimer();
       }
       addSystem(isVideoCall ? '📹 Videoanruf verbunden.' : '📞 Anruf verbunden.');
-    } else if(pc.connectionState === 'disconnected'){
-      // Kurz warten ob es sich selbst erholt
+    }else if(pc.connectionState === 'disconnected'){
       setTimeout(()=>{
-        if(peerConn?.connectionState === 'disconnected' && !intentionalClose){
+        if(peerConn?.connectionState === 'disconnected' && !intentionalClose)
           scheduleCallReconnect();
-        }
       }, 2000);
-    } else if(pc.connectionState === 'failed'){
-      // Sofort Auto-Reconnect versuchen
+    }else if(pc.connectionState === 'failed'){
       if(!intentionalClose) scheduleCallReconnect();
-    } else if(pc.connectionState === 'closed'){
+    }else if(pc.connectionState === 'closed'){
       if(!intentionalClose) cleanupCall();
     }
   };
+
   return pc;
 }
 
-async function handleOffer(sdp){
-  if(!peerConn)return;
-  await peerConn.setRemoteDescription(new RTCSessionDescription(sdp));
-  // Gepufferte ICE-Kandidaten jetzt verarbeiten — remoteDescription ist gesetzt
-  await flushPendingIce();
-  const answer = await peerConn.createAnswer();
-  await peerConn.setLocalDescription(answer);
-  ws.send(JSON.stringify({type:'webrtc_answer',sdp:peerConn.localDescription}));
+// ── Video-Overlay ─────────────────────────────────────────────────────────────
+function showVideoCallOverlay(text){
+  $('video-call-overlay').style.display = 'block';
+  $('video-call-text').textContent = text;
+  $('call-bar').style.display = 'none';
+  $('call-incoming').style.display = 'none';
+  let w = $('video-waiting');
+  if(!w){
+    w = document.createElement('div'); w.className='video-waiting'; w.id='video-waiting';
+    w.textContent = '> Warte auf Partner-Video…';
+    $('video-call-overlay').appendChild(w);
+  }
 }
 
-// ── Qualitäts-Monitoring (WebRTC getStats) ────────────────────────────────────
+function attachLocalVideo(stream){
+  const lv = $('local-video');
+  if(!lv) return;
+  lv.srcObject = stream; lv.muted = true;
+  lv.play().catch(()=> setTimeout(()=> lv.play().catch(()=>{}), 300));
+}
+
+// ── Kamera wechseln ───────────────────────────────────────────────────────────
+async function flipCamera(){
+  if(!localStream || !isVideoCall || !peerConn) return;
+  currentFacing = currentFacing === 'user' ? 'environment' : 'user';
+  try{
+    localStream.getVideoTracks().forEach(t => t.stop());
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {facingMode: currentFacing}
+    });
+    const newTrack = newStream.getVideoTracks()[0];
+    const sender = peerConn.getSenders().find(s => s.track?.kind === 'video');
+    if(sender) await sender.replaceTrack(newTrack);
+    localStream.removeTrack(localStream.getVideoTracks()[0]);
+    localStream.addTrack(newTrack);
+    attachLocalVideo(localStream);
+    addSystem('// Kamera: ' + (currentFacing==='user' ? 'Vorne' : 'Hinten'));
+  }catch(e){ addSystem('[Kamera-Wechsel: ' + e.message + ']'); }
+}
+
+// ── Qualität & Reconnect ──────────────────────────────────────────────────────
 let qualityInterval = null;
 let lastBytesReceived = 0;
 const MAX_CALL_RECONNECTS = 3;
-
-function startQualityMonitor() {
-  stopQualityMonitor();
-  lastBytesReceived = 0;
-  qualityInterval = setInterval(async () => {
-    if (!peerConn) return;
-    try {
-      const stats = await peerConn.getStats();
-      let rtt = null, packetsLost = 0, packetsReceived = 0, bytesReceived = 0;
-
-      stats.forEach(report => {
-        // Inbound-RTP: empfangene Pakete
-        if (report.type === 'inbound-rtp') {
-          packetsLost     += report.packetsLost     || 0;
-          packetsReceived += report.packetsReceived || 0;
-          bytesReceived   += report.bytesReceived   || 0;
-        }
-        // Candidate-Pair: RTT (Ping)
-        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
-          rtt = Math.round(report.currentRoundTripTime * 1000); // ms
-        }
-      });
-
-      // Qualität berechnen
-      const total       = packetsLost + packetsReceived;
-      const lossRate    = total > 0 ? packetsLost / total : 0;
-      const hasData     = bytesReceived > lastBytesReceived;
-      lastBytesReceived = bytesReceived;
-
-      let quality = 'good';
-      if (!hasData && callSeconds > 5)        quality = 'poor';   // kein Datenfluss
-      else if (lossRate > 0.1 || rtt > 300)   quality = 'poor';   // >10% Verlust oder >300ms
-      else if (lossRate > 0.03 || rtt > 150)  quality = 'medium'; // >3% Verlust oder >150ms
-
-      // UI aktualisieren
-      updateQualityUI(quality, rtt);
-
-    } catch {}
-  }, 2000); // alle 2 Sekunden
-}
-
-function stopQualityMonitor() {
-  clearInterval(qualityInterval);
-  qualityInterval = null;
-}
-
-function updateQualityUI(quality, rtt) {
-  // Audio-Anruf
-  const aq = $('call-quality');
-  if (aq) { aq.className = `quality-indicator ${quality}`; aq.title = rtt ? `RTT: ${rtt}ms` : quality; }
-  // Video-Anruf
-  const vq = $('video-call-quality');
-  if (vq) { vq.className = `quality-indicator ${quality}`; vq.title = rtt ? `RTT: ${rtt}ms` : quality; }
-
-  // Bei schlechter Qualität warnen
-  if (quality === 'poor' && callSeconds > 8) {
-    const statusText = rtt ? `Schwache Verbindung (${rtt}ms)` : 'Schwache Verbindung';
-    if (isVideoCall) {
-      $('video-call-text').textContent = statusText;
-    }
-  } else if (quality === 'good') {
-    if (isVideoCall && $('video-call-text')?.textContent.includes('Schwache')) {
-      $('video-call-text').textContent = 'Verbunden';
-    }
-  }
-}
-
-// ── Auto-Reconnect bei Anrufabbruch ──────────────────────────────────────────
 let callReconnectTimer = null;
 
-function scheduleCallReconnect() {
-  if (intentionalClose || !roomId || callReconnectAttempts >= MAX_CALL_RECONNECTS) {
-    if (callReconnectAttempts >= MAX_CALL_RECONNECTS) {
-      addSystem('// Anruf konnte nicht wiederhergestellt werden.');
-      cleanupCall();
-    }
+function startQualityMonitor(){
+  stopQualityMonitor(); lastBytesReceived = 0;
+  qualityInterval = setInterval(async()=>{
+    if(!peerConn) return;
+    try{
+      const stats = await peerConn.getStats();
+      let rtt=null, pLost=0, pRec=0, bRec=0;
+      stats.forEach(r=>{
+        if(r.type==='inbound-rtp'){ pLost+=r.packetsLost||0; pRec+=r.packetsReceived||0; bRec+=r.bytesReceived||0; }
+        if(r.type==='candidate-pair'&&r.state==='succeeded'&&r.currentRoundTripTime)
+          rtt = Math.round(r.currentRoundTripTime*1000);
+      });
+      const loss = (pLost+pRec)>0 ? pLost/(pLost+pRec) : 0;
+      const hasData = bRec > lastBytesReceived; lastBytesReceived = bRec;
+      let q = 'good';
+      if(!hasData && callSeconds>5) q='poor';
+      else if(loss>0.1||rtt>300) q='poor';
+      else if(loss>0.03||rtt>150) q='medium';
+      const aq=$('call-quality');     if(aq){ aq.className=`quality-indicator ${q}`; if(rtt) aq.title=rtt+'ms'; }
+      const vq=$('video-call-quality');if(vq){ vq.className=`quality-indicator ${q}`; if(rtt) vq.title=rtt+'ms'; }
+    }catch{}
+  }, 2000);
+}
+function stopQualityMonitor(){ clearInterval(qualityInterval); qualityInterval=null; }
+
+function scheduleCallReconnect(){
+  if(intentionalClose||!roomId||callReconnectAttempts>=MAX_CALL_RECONNECTS){
+    if(callReconnectAttempts>=MAX_CALL_RECONNECTS){ addSystem('// Anruf konnte nicht wiederhergestellt werden.'); cleanupCall(); }
     return;
   }
-
   callReconnectAttempts++;
-  const delay = callReconnectAttempts * 2000; // 2s, 4s, 6s
-
-  // Banner zeigen
-  const banner = $('call-reconnect-banner');
-  if (banner) banner.classList.add('visible');
-  if (isVideoCall) {
-    $('video-call-text').textContent = `Verbindung getrennt — Versuch ${callReconnectAttempts}/${MAX_CALL_RECONNECTS}…`;
-  } else {
-    $('call-status-text').textContent = `Verbindung getrennt — Wiederverbinde…`;
-  }
-
-  addSystem(`// Anruf unterbrochen — Wiederverbindungsversuch ${callReconnectAttempts}/${MAX_CALL_RECONNECTS}…`);
-
-  callReconnectTimer = setTimeout(async () => {
-    if (!peerConn || !partnerConnected) { cleanupCall(); return; }
-    try {
-      // Neues Offer erstellen und senden
-      const offer = await peerConn.createOffer({ iceRestart: true }); // iceRestart = neuer ICE-Handshake
+  const delay = callReconnectAttempts * 2000;
+  const b=$('call-reconnect-banner'); if(b) b.classList.add('visible');
+  addSystem(`// Anruf unterbrochen — Versuch ${callReconnectAttempts}/${MAX_CALL_RECONNECTS}…`);
+  callReconnectTimer = setTimeout(async()=>{
+    if(!peerConn||!partnerConnected){ cleanupCall(); return; }
+    try{
+      const offer = await peerConn.createOffer({iceRestart:true});
       await peerConn.setLocalDescription(offer);
-      ws.send(JSON.stringify({ type: 'webrtc_offer', sdp: peerConn.localDescription }));
-      const banner = $('call-reconnect-banner');
-      if (banner) banner.classList.remove('visible');
-    } catch(e) {
-      addSystem('[Reconnect fehlgeschlagen: ' + e.message + ']');
-      cleanupCall();
-    }
+      ws.send(JSON.stringify({type:'webrtc_offer', sdp:peerConn.localDescription}));
+      const b=$('call-reconnect-banner'); if(b) b.classList.remove('visible');
+    }catch(e){ addSystem('[Reconnect: '+e.message+']'); cleanupCall(); }
   }, delay);
 }
-
-function cancelCallReconnect() {
-  clearTimeout(callReconnectTimer);
-  callReconnectTimer = null;
-  const banner = $('call-reconnect-banner');
-  if (banner) banner.classList.remove('visible');
+function cancelCallReconnect(){
+  clearTimeout(callReconnectTimer); callReconnectTimer=null;
+  const b=$('call-reconnect-banner'); if(b) b.classList.remove('visible');
 }
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
-function startCallTimer() {
-  callSeconds = 0; callReconnectAttempts = 0;
-  $('call-timer').style.display = 'inline';
-  callTimer = setInterval(() => {
+function startCallTimer(){
+  callSeconds=0; callReconnectAttempts=0;
+  $('call-timer').style.display='inline';
+  callTimer=setInterval(()=>{
     callSeconds++;
-    const m = Math.floor(callSeconds/60), s = callSeconds%60;
-    $('call-timer').textContent = `${m}:${String(s).padStart(2,'0')}`;
-  }, 1000);
+    const m=Math.floor(callSeconds/60),s=callSeconds%60;
+    $('call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;
+  },1000);
+  startQualityMonitor();
+}
+function startVideoCallTimer(){
+  callSeconds=0; callReconnectAttempts=0;
+  $('video-call-timer').style.display='inline';
+  callTimer=setInterval(()=>{
+    callSeconds++;
+    const m=Math.floor(callSeconds/60),s=callSeconds%60;
+    $('video-call-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;
+  },1000);
   startQualityMonitor();
 }
 
-function startVideoCallTimer() {
-  callSeconds = 0; callReconnectAttempts = 0;
-  $('video-call-timer').style.display = 'inline';
-  callTimer = setInterval(() => {
-    callSeconds++;
-    const m = Math.floor(callSeconds/60), s = callSeconds%60;
-    $('video-call-timer').textContent = `${m}:${String(s).padStart(2,'0')}`;
-  }, 1000);
-  startQualityMonitor();
-}
-
-// ── Auflegen ──────────────────────────────────────────────────────────────────
-function hangup() {
+function hangup(){
   ws?.readyState===1 && ws.send(JSON.stringify({type:'webrtc_hangup'}));
-  cleanupCall();
-  addSystem('📵 Anruf beendet.');
+  cleanupCall(); addSystem('📵 Anruf beendet.');
 }
 
 function cleanupCall(){
@@ -1150,71 +1073,35 @@ function cleanupCall(){
   clearTimeout(window._callTimeout);
   cancelCallReconnect();
   stopQualityMonitor();
-  window._pendingOffer=null; window._callAnswered=false;
+  window._pendingOffer=null;
   pendingIceCandidates=[];
   callReconnectAttempts=0;
   isVideoCall=false; currentFacing='user'; videoMuted=false; audioMuted=false;
   stopRingtone();
 
-  // 1. Alle lokalen Tracks zuerst stoppen — WICHTIG: vor srcObject=null
-  if(localStream){
-    localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} });
-    localStream=null;
-  }
+  // Video/Audio Elemente zuerst loslassen
+  const rv=$('remote-video'); if(rv){ rv.pause(); rv.srcObject=null; try{rv.load();}catch{} }
+  const lv=$('local-video');  if(lv){ lv.pause(); lv.srcObject=null; try{lv.load();}catch{} }
+  const ra=$('remote-audio'); if(ra){ ra.pause(); ra.srcObject=null; }
 
-  // 2. PeerConnection schließen
-  if(peerConn){
-    try{
-      peerConn.getSenders().forEach(s=>{ try{s.track?.stop();}catch{}; });
-      peerConn.close();
-    }catch{}
-    peerConn=null;
-  }
+  // Tracks stoppen
+  if(localStream){ localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} }); localStream=null; }
 
-  // 3. Video-Elemente sauber stoppen — iOS-Reihenfolge: pause → srcObject=null → src='' → load()
-  function stopVideoEl(id){
-    const el=$(id); if(!el)return;
-    try{
-      el.pause();
-      el.srcObject=null;
-      el.src='';          // leerer String statt removeAttribute für iOS
-      el.load();          // erzwingt Reset des Media-Elements
-    }catch{}
-  }
-  stopVideoEl('remote-video');
-  stopVideoEl('local-video');
+  // PeerConnection schließen
+  if(peerConn){ try{peerConn.close();}catch{} peerConn=null; }
 
-  // 4. Audio stoppen
-  const ra=$('remote-audio');
-  if(ra){ try{ra.pause();ra.srcObject=null;ra.src='';ra.load();}catch{} }
-
-  // 5. UI zurücksetzen — mit kleiner Verzögerung damit iOS Zeit hat den Stream zu beenden
-  const overlay=$('video-call-overlay');
-  if(overlay){
-    // Sofort visuell ausblenden
-    overlay.style.opacity='0';
-    overlay.style.pointerEvents='none';
-    // Nach kurzer Pause komplett entfernen
-    setTimeout(()=>{
-      overlay.style.display='none';
-      overlay.style.opacity='';
-      overlay.style.pointerEvents='';
-      overlay.classList.remove('blurred');
-      overlay.querySelector('.video-shield')?.remove();
-      overlay.querySelector('.video-waiting')?.remove();
-    },300);
-  }
-
-  $('call-bar').style.display        = 'none';
-  $('call-incoming').style.display   = 'none';
-  $('call-timer').style.display      = 'none';
-  $('video-call-timer').style.display= 'none';
-  $('call-status-dot')?.classList.remove('active');
-  $('video-call-dot')?.classList.remove('active');
-  if($('btn-mute'))       $('btn-mute').textContent       ='🎤';
-  if($('btn-vid-mute'))   $('btn-vid-mute').textContent   ='🎤';
-  if($('btn-vid-cam'))    $('btn-vid-cam').textContent    ='📷';
-  if($('btn-audio-output'))$('btn-audio-output').textContent='🔊';
+  // UI
+  $('call-bar').style.display='none';
+  $('call-incoming').style.display='none';
+  $('video-call-overlay').style.display='none';
+  $('call-timer').style.display='none';
+  $('video-call-timer').style.display='none';
+  $('call-status-dot').classList.remove('active');
+  $('video-call-dot').classList.remove('active');
+  const bm=$('btn-mute'); if(bm){bm.textContent='🎤';bm.classList.remove('muted');}
+  const vm=$('btn-vid-mute'); if(vm){vm.textContent='🎤';vm.classList.remove('muted');}
+  const vc=$('btn-vid-cam'); if(vc){vc.textContent='📷';vc.classList.remove('muted');}
+  document.querySelector('.video-shield')?.remove();
 }
 
 // ── Call Buttons ──────────────────────────────────────────────────────────────

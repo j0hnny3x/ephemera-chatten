@@ -30,33 +30,131 @@
       <div class="logo-icon"></div>
       <div>
         <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
-        <div class="sub">Privater Einmal-Chat · E2E-verschlüsselt</div>
+        <div class="sub" id="home-sub">Privater Einmal-Chat · E2E-verschlüsselt</div>
       </div>
     </div>
-    <div class="card">
-      <ul class="features">
-        <li>Kein Login · Keine Datenbank · Kein Account</li>
-        <li>AES-GCM-256 — Server sieht keinen Klartext</li>
-        <li>Text · Bilder · Audio · Video · Anrufe</li>
-        <li>Max. 2 Teilnehmer · 2 Stunden Laufzeit</li>
-      </ul>
+
+    <div class="mode-switch" role="tablist" aria-label="Modus wählen">
+      <button type="button" class="mode-btn active" id="mode-chat" role="tab"
+        aria-selected="true" aria-controls="pane-chat">Chat</button>
+      <button type="button" class="mode-btn" id="mode-note" role="tab"
+        aria-selected="false" aria-controls="pane-note">Einmal-Nachricht</button>
     </div>
-    <div class="card">
-      <div class="pw-label">Dein Name <span class="optional">(optional)</span></div>
-      <input id="sender-name" type="text" placeholder="z.B. Max Mustermann — erscheint in der Einladung"
-        autocomplete="name" spellcheck="false" maxlength="30" class="text-input">
-    </div>
-    <div class="card">
-      <div class="pw-label">Raumpasswort <span class="optional">(optional)</span></div>
-      <div class="pw-row">
-        <input id="pw-input" type="password" placeholder="Leer = kein Passwort"
-          autocomplete="new-password" spellcheck="false" maxlength="128">
-        <button id="pw-toggle" class="btn btn-ghost pw-eye" type="button">👁</button>
+
+    <!-- ── Modus: Chat ────────────────────────────────────────────────────── -->
+    <div id="pane-chat" class="home-pane active" role="tabpanel" aria-labelledby="mode-chat">
+      <div class="card">
+        <ul class="features">
+          <li>Kein Login · Keine Datenbank · Kein Account</li>
+          <li>AES-GCM-256 — Server sieht keinen Klartext</li>
+          <li>Text · Bilder · Audio · Video · Anrufe</li>
+          <li>Max. 2 Teilnehmer · 2 Stunden Laufzeit</li>
+        </ul>
       </div>
-      <div id="pw-strength-bar"><div id="pw-strength-fill"></div></div>
-      <p class="pw-hint">Wird <strong>niemals</strong> an den Server übertragen.</p>
+      <div class="card">
+        <div class="pw-label">Dein Name <span class="optional">(optional)</span></div>
+        <input id="sender-name" type="text" placeholder="z.B. Max Mustermann — erscheint in der Einladung"
+          autocomplete="name" spellcheck="false" maxlength="30" class="text-input">
+      </div>
+      <div class="card">
+        <div class="pw-label">Raumpasswort <span class="optional">(optional)</span></div>
+        <div class="pw-row">
+          <input id="pw-input" type="password" placeholder="Leer = kein Passwort"
+            autocomplete="new-password" spellcheck="false" maxlength="128">
+          <button id="pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
+        </div>
+        <div id="pw-strength-bar"><div id="pw-strength-fill"></div></div>
+        <p class="pw-hint">Wird <strong>niemals</strong> an den Server übertragen.</p>
+      </div>
+      <button id="btn-create" class="btn btn-primary">[ SICHEREN CHAT ERSTELLEN ]</button>
     </div>
-    <button id="btn-create" class="btn btn-primary">[ SICHEREN CHAT ERSTELLEN ]</button>
+
+    <!-- ── Modus: Einmal-Nachricht ────────────────────────────────────────── -->
+    <div id="pane-note" class="home-pane" role="tabpanel" aria-labelledby="mode-note">
+
+      <div class="card note-compose-card">
+        <label class="pw-label" for="note-text">Deine Nachricht</label>
+        <textarea id="note-text" class="note-textarea" rows="7" maxlength="10000"
+          placeholder="Tippe hier deine Nachricht …" spellcheck="true"></textarea>
+        <div class="note-meter">
+          <span id="note-count">0</span><span class="note-meter-max"> / 10.000</span>
+        </div>
+      </div>
+
+      <div class="card note-options">
+        <div class="opt-row">
+          <label class="opt-label" for="note-ttl">Läuft ab nach</label>
+          <select id="note-ttl" class="opt-select">
+            <option value="2">2 Stunden</option>
+            <option value="12">12 Stunden</option>
+            <option value="24">24 Stunden</option>
+            <option value="48" selected>2 Tagen</option>
+            <option value="168">7 Tagen</option>
+            <option value="336">14 Tagen</option>
+          </select>
+        </div>
+
+        <div class="opt-divider"></div>
+
+        <label class="opt-row tswitch-wrap" for="note-burn">
+          <span class="opt-label">Nach dem Lesen löschen</span>
+          <input type="checkbox" id="note-burn" class="tswitch-input" checked>
+          <span class="tswitch" aria-hidden="true"><span class="tswitch-knob"></span></span>
+        </label>
+
+        <div class="opt-divider"></div>
+
+        <div class="opt-pw">
+          <label class="opt-label" for="note-pw">Passwort <span class="optional">(optional)</span></label>
+          <div class="pw-row">
+            <input id="note-pw" type="password" placeholder="Leer = kein Passwort"
+              autocomplete="new-password" spellcheck="false" maxlength="128">
+            <button id="note-pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
+          </div>
+          <div id="note-pw-bar"><div id="note-pw-fill"></div></div>
+        </div>
+
+        <p class="note-summary" id="note-summary"></p>
+      </div>
+
+      <div class="note-cta">
+        <button id="btn-note-create" class="btn btn-primary" disabled>[ NACHRICHT ERSTELLEN ]</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Was mit deiner Nachricht passiert</div>
+        <ul class="features">
+          <li>Verschlüsselt wird im Browser — der Schlüssel steht hinter dem <code>#</code> im Link und erreicht den Server nie</li>
+          <li>Gespeichert wird nur der verschlüsselte Text, ohne Konto, ohne IP-Adresse</li>
+          <li>Beim ersten Öffnen wird sie gelöscht — endgültig, auch für dich</li>
+          <li>Ungeöffnet verschwindet sie, sobald die Frist abläuft</li>
+        </ul>
+      </div>
+
+      <ol class="steps">
+        <li>
+          <span class="step-n">1</span>
+          <div class="step-body">
+            <strong>Schreiben</strong>
+            <p>Nachricht eintippen, Frist wählen, auf <em>Nachricht erstellen</em> tippen.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">2</span>
+          <div class="step-body">
+            <strong>Link verschicken</strong>
+            <p>Den Link über WhatsApp, Telegram, Signal oder SMS weitergeben.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">3</span>
+          <div class="step-body">
+            <strong>Einmal lesen</strong>
+            <p>Der Empfänger öffnet den Link, liest — und die Nachricht zerstört sich.</p>
+          </div>
+        </li>
+      </ol>
+    </div>
   </div>
 
   <!-- LINK TEILEN -->
@@ -227,15 +325,6 @@
       <span style="margin-left:.4rem;font-size:.7rem;color:var(--matrix)">schreibt…</span>
     </div>
 
-    <!-- QR Overlay -->
-    <div id="qr-overlay" style="display:none">
-      <div class="qr-card">
-        <div id="qr-canvas"></div>
-        <p class="sub" style="margin-top:.75rem;text-align:center">Mit Handy scannen</p>
-        <button id="btn-qr-close" class="btn btn-ghost" style="margin-top:.75rem;width:100%">SCHLIESSEN</button>
-      </div>
-    </div>
-
     <!-- Media Vorschau -->
     <div id="media-preview-overlay" style="display:none">
       <div class="media-preview-card">
@@ -339,6 +428,89 @@
     </div>
   </div>
 
+  <!-- EINMAL-NACHRICHT: LINK FERTIG -->
+  <div id="screen-note-done" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Link verschicken</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Dein Link</div>
+      <div class="link-box" id="note-link-box" tabindex="0" role="textbox" aria-readonly="true" aria-label="Link zur Nachricht"></div>
+      <button id="btn-note-copy" class="btn btn-primary btn-block">Link kopieren</button>
+      <div class="share-row">
+        <a id="share-wa" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        <a id="share-tg" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">Telegram</a>
+        <button id="btn-note-qr" class="btn btn-ghost" type="button">QR-Code</button>
+      </div>
+      <p class="note-foot" id="note-done-info"></p>
+    </div>
+
+    <div class="card note-warn">
+      <div class="card-title">Der Link ist der Schlüssel</div>
+      <p>Er steht nur hier. Wir haben ihn nicht und können ihn nicht wiederherstellen — kopier ihn, bevor du diese Seite verlässt.</p>
+    </div>
+
+    <button id="btn-note-again" class="btn btn-ghost btn-block">Weitere Nachricht schreiben</button>
+  </div>
+
+  <!-- EINMAL-NACHRICHT: LESEN -->
+  <div id="screen-note-read" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Einmal-Nachricht</div>
+      </div>
+    </div>
+
+    <!-- Zustand 1: versiegelt -->
+    <div class="card" id="note-sealed">
+      <div class="card-title">Verschlüsselte Nachricht</div>
+      <p class="note-lead" id="note-lead">Du kannst sie <strong>einmal</strong> öffnen. Danach ist sie vom Server gelöscht.</p>
+
+      <div class="cipher-block" id="cipher-preview" aria-hidden="true"></div>
+
+      <div class="opt-pw" id="note-read-pwgate" hidden>
+        <label class="opt-label" for="note-read-pw">Passwort</label>
+        <div class="pw-row">
+          <input id="note-read-pw" type="password" placeholder="Passwort …"
+            autocomplete="current-password" maxlength="128">
+          <button id="note-read-pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
+        </div>
+      </div>
+
+      <div class="note-error" id="note-read-error" role="alert" hidden></div>
+
+      <button id="btn-note-open" class="btn btn-primary btn-block">[ NACHRICHT ÖFFNEN ]</button>
+      <p class="note-foot" id="note-read-expiry"></p>
+    </div>
+
+    <!-- Zustand 2: geöffnet -->
+    <div class="card" id="note-revealed" hidden>
+      <div class="card-title" id="note-revealed-title">Nachricht</div>
+      <div class="note-body" id="note-body"></div>
+      <div class="share-row">
+        <button id="btn-note-copy-text" class="btn btn-ghost" type="button">Text kopieren</button>
+        <button id="btn-note-reply" class="btn btn-primary" type="button">Antworten</button>
+      </div>
+      <p class="note-foot" id="note-destroyed-note"></p>
+    </div>
+
+    <!-- Zustand 3: weg -->
+    <div class="card closed-card" id="note-gone" hidden>
+      <div class="closed-icon">[ ]</div>
+      <h1>NICHTS<br>MEHR DA</h1>
+      <p id="note-gone-reason">Diese Nachricht wurde bereits gelesen oder ist abgelaufen.</p>
+      <br>
+      <button id="btn-note-gone-new" class="btn btn-primary btn-block">Eigene Nachricht schreiben</button>
+    </div>
+  </div>
+
   <!-- CLOSED -->
   <div id="screen-closed" class="screen">
     <div class="card closed-card">
@@ -351,6 +523,16 @@
   </div>
 
 </div>
+
+<!-- QR Overlay -->
+<div id="qr-overlay" style="display:none">
+  <div class="qr-card">
+    <div id="qr-canvas"></div>
+    <p class="sub" style="margin-top:.75rem;text-align:center">Mit Handy scannen</p>
+    <button id="btn-qr-close" class="btn btn-ghost" style="margin-top:.75rem;width:100%">SCHLIESSEN</button>
+  </div>
+</div>
+
 
 <div id="emoji-picker" style="display:none"><div class="emoji-list" id="emoji-list"></div></div>
 <div id="drop-overlay"></div>

@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const crypto  = require('crypto');
 const path    = require('path');
 const fs      = require('fs');
+const notes   = require('./notes');
 
 const app    = express();
 const server = http.createServer(app);
@@ -65,7 +66,21 @@ app.use((req, res, next) => {
   next();
 });
 
+const INDEX_HTML = path.join(__dirname, 'index.html');
+
+// Der Ciphertext-Store darf niemals über den statischen Handler rausgehen
+app.use((req, res, next) => {
+  const p = req.path.toLowerCase();
+  if (p === '/data' || p.startsWith('/data/')) return res.status(404).end();
+  next();
+});
+
 app.use(express.static(__dirname, { etag: false }));
+
+// Einmal-Nachrichten bringen ihren eigenen Body-Parser mit (groesserer Ciphertext)
+// und muessen deshalb vor dem globalen 16kb-Parser registriert werden.
+const noteStore = notes.register(app, INDEX_HTML);
+
 app.use(express.json({ limit: '16kb' }));
 
 app.post('/api/room', (req, res) => {
@@ -88,6 +103,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     uptime: Math.round(process.uptime()),
     rooms: rooms.size,
+    notes: noteStore.count(),
     timestamp: Date.now(),
   });
 });
@@ -103,7 +119,7 @@ app.get('/api/turn', (req, res) => {
 });
 
 app.get('/r/:id', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(INDEX_HTML);
 });
 
 app.get('/og-image.png', (req, res) => {
@@ -280,6 +296,15 @@ function broadcastExcept(room, sender, msg) {
   const data = JSON.stringify(msg);
   for (const ws of room.clients.values()) if (ws !== sender && ws.readyState === 1) ws.send(data);
 }
+
+function shutdown(sig) {
+  console.log(`[server] ${sig} — beende`);
+  try { noteStore.flush(); } catch {}
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`ephemera läuft auf http://localhost:${PORT}`));

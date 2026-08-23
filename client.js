@@ -1595,5 +1595,446 @@ function closedReason(code){
     if(ws?.readyState===1) ws.send(JSON.stringify({type:'extend'}));
   });
   const h = await initFromFragment();
-  if(!h) showScreen('home');
+  // Ab hier ist das Skript komplett ausgewertet — die Konstanten der
+  // Einmal-Nachricht sind initialisiert und duerfen benutzt werden.
+  initNoteUI();
+  if(!h){
+    const n = await initNoteFromFragment();
+    if(!n) showScreen('home');
+  }
 })();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── EINMAL-NACHRICHT ──────────────────────────────────────────────────────────
+// Selbstzerstörende Einweg-Nachricht. Eigener Modus neben dem Chat, teilt sich
+// mit ihm nur Optik und Krypto-Prinzip: Schlüssel im URL-Fragment, Server sieht
+// ausschließlich Ciphertext.
+// ══════════════════════════════════════════════════════════════════════════════
+
+screens.noteDone = $('screen-note-done');
+screens.noteRead = $('screen-note-read');
+
+const NOTE_MAX_CHARS = 10000;
+const NOTE_GLYPHS    = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎ0123456789ABCDEF<>/|=+*#$%&';
+
+let noteData = { id:null, key:null, link:null, hasPassword:false, burn:true, expiresAt:0, plain:null };
+
+// ── Base64 in Bloecken — schuetzt vor RangeError bei langen Nachrichten ───────
+function noteBytesToB64(bytes) {
+  let out = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
+}
+function noteB64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ── Krypto — eigener Schluessel, damit ein offener Chat nicht gestoert wird ───
+async function noteEncrypt(text, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, new TextEncoder().encode(text));
+  const buf = new Uint8Array(12 + ct.byteLength);
+  buf.set(iv); buf.set(new Uint8Array(ct), 12);
+  return noteBytesToB64(buf);
+}
+async function noteDecrypt(b64, key) {
+  const buf = noteB64ToBytes(b64);
+  const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv: buf.slice(0,12) }, key, buf.slice(12));
+  return new TextDecoder().decode(pt);
+}
+
+// ── Text aufbereiten ─────────────────────────────────────────────────────────
+// Reihenfolge zwingend: Smileys auf Rohtext, dann escapen, dann verlinken.
+// So kann kein HTML aus der Nachricht in die Seite gelangen.
+const NOTE_SMILEYS = [
+  [/:-?\)/g, '🙂'], [/:-?\(/g, '🙁'], [/;-?\)/g, '😉'], [/:-?D/g, '😄'],
+  [/:-?P/g, '😛'], [/:-?[oO]/g, '😮'], [/:'\(/g, '😢'], [/<3/g, '❤️'],
+];
+function noteSmileys(s) {
+  // Nur am Wortanfang ersetzen, damit https:// und Uhrzeiten unangetastet bleiben
+  return s.replace(/(^|\s)([:;]-?[)(DPoO]|:'\(|<3)/g, (m, lead, sym) => {
+    for (const [re, emo] of NOTE_SMILEYS) { re.lastIndex = 0; if (new RegExp('^(?:' + re.source + ')$').test(sym)) return lead + emo; }
+    return m;
+  });
+}
+function noteEscapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+function noteRenderBody(text) {
+  const escaped = noteEscapeHtml(noteSmileys(text));
+  return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/g, (raw) => {
+    let url = raw, tail = '';
+    const trailing = url.match(/[.,;:!?)\]]+$/);
+    if (trailing) { tail = trailing[0]; url = url.slice(0, -tail.length); }
+    if (!url) return raw;
+    const href = url.startsWith('www.') ? 'https://' + url : url;
+    return '<a href="' + href + '" target="_blank" rel="noopener noreferrer nofollow">' + url + '</a>' + tail;
+  });
+}
+
+// ── Zeitangaben ──────────────────────────────────────────────────────────────
+function noteFmtWhen(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit', year:'numeric' })
+       + ' um ' + d.toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' }) + ' Uhr';
+}
+function noteFmtRemaining(ts) {
+  const ms = ts - Date.now();
+  if (ms <= 0) return 'abgelaufen';
+  const h = Math.round(ms / 3600000);
+  if (h < 1)  return 'in ' + Math.max(1, Math.round(ms / 60000)) + ' Minuten';
+  if (h < 48) return 'in ' + h + ' Stunden';
+  return 'in ' + Math.round(h / 24) + ' Tagen';
+}
+
+// ── Modus-Umschalter ─────────────────────────────────────────────────────────
+function setHomeMode(mode) {
+  const isNote = mode === 'note';
+  $('mode-chat').classList.toggle('active', !isNote);
+  $('mode-note').classList.toggle('active',  isNote);
+  $('mode-chat').setAttribute('aria-selected', String(!isNote));
+  $('mode-note').setAttribute('aria-selected', String(isNote));
+  $('pane-chat').classList.toggle('active', !isNote);
+  $('pane-note').classList.toggle('active',  isNote);
+  $('home-sub').textContent = isNote
+    ? 'Einweg-Nachricht · zerstört sich nach dem Lesen'
+    : 'Privater Einmal-Chat · E2E-verschlüsselt';
+  screens.home.scrollTop = 0;
+}
+
+// ── Verfassen ────────────────────────────────────────────────────────────────
+function updateNoteSummary() {
+  const hours = parseInt($('note-ttl').value, 10);
+  const burn  = $('note-burn').checked;
+  const hasPw = !!$('note-pw').value;
+  const when  = noteFmtWhen(Date.now() + hours * 3600000);
+  let s = burn
+    ? 'Wird beim <strong>ersten Öffnen</strong> gelöscht — spätestens am <strong>' + when + '</strong>.'
+    : 'Bleibt bis <strong>' + when + '</strong> lesbar, danach wird sie gelöscht.';
+  if (hasPw) s += ' Zum Öffnen ist zusätzlich das Passwort nötig.';
+  $('note-summary').innerHTML = s;
+}
+
+function updateNoteCounter() {
+  const len = $('note-text').value.length;
+  const meter = $('note-count').parentElement;
+  $('note-count').textContent = len.toLocaleString('de-DE');
+  meter.classList.toggle('near', len > NOTE_MAX_CHARS * 0.9 && len < NOTE_MAX_CHARS);
+  meter.classList.toggle('full', len >= NOTE_MAX_CHARS);
+  $('btn-note-create').disabled = $('note-text').value.trim().length === 0;
+}
+
+async function createNote() {
+  const btn  = $('btn-note-create');
+  const text = $('note-text').value;
+  if (!text.trim()) return;
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '[ VERSCHLÜSSELE … ]';
+  try {
+    const { key, b64url } = await generateKey();
+    const payload  = await noteEncrypt(text, key);
+    const pwPlain  = $('note-pw').value;
+    const pwHash   = pwPlain ? await hashPassword(pwPlain) : null;
+    const ttlHours = parseInt($('note-ttl').value, 10);
+    const burn     = $('note-burn').checked;
+
+    const res = await fetch('/api/note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload, pwHash, ttlHours, burn }),
+    });
+    if (res.status === 429) throw new Error('Zu viele Nachrichten in kurzer Zeit. Versuch es in ein paar Minuten noch einmal.');
+    if (res.status === 503) throw new Error('Der Server ist gerade voll. Versuch es später noch einmal.');
+    if (!res.ok)            throw new Error('Die Nachricht konnte nicht gespeichert werden.');
+
+    const data = await res.json();
+    showNoteDone(location.origin + '/n/' + data.noteId + '#' + b64url, data);
+
+    // Klartext nicht im Formular stehen lassen
+    $('note-text').value = '';
+    $('note-pw').value   = '';
+    $('note-pw-fill').style.width = '0';
+    updateNoteCounter();
+    updateNoteSummary();
+  } catch (e) {
+    alert(e.message || 'Die Nachricht konnte nicht erstellt werden.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+    updateNoteCounter();
+  }
+}
+
+// ── Link-Screen ──────────────────────────────────────────────────────────────
+function noteShareText(link) {
+  return 'Ich habe dir eine verschlüsselte Nachricht hinterlegt. Sie lässt sich nur einmal öffnen:\n' + link;
+}
+
+function showNoteDone(link, data) {
+  noteData.link = link;
+  $('note-link-box').textContent = link;
+
+  const share = encodeURIComponent(noteShareText(link));
+  $('share-wa').href = 'https://wa.me/?text=' + share;
+  $('share-tg').href = 'https://t.me/share/url?url=' + encodeURIComponent(link)
+                     + '&text=' + encodeURIComponent('Verschlüsselte Nachricht — nur einmal zu öffnen');
+
+  $('note-done-info').textContent = data.burn
+    ? 'Zerstört sich beim ersten Öffnen. Ungelesen verschwindet sie ' + noteFmtRemaining(data.expiresAt) + '.'
+    : 'Lesbar bis ' + noteFmtWhen(data.expiresAt) + '.';
+
+  $('btn-note-copy').textContent = 'Link kopieren';
+  showScreen('noteDone');
+
+  // Direkt in die Zwischenablage — der haeufigste naechste Schritt
+  navigator.clipboard?.writeText(link).then(() => {
+    $('btn-note-copy').textContent = '✓ Link kopiert';
+  }).catch(() => {});
+}
+
+// ── Lesen ────────────────────────────────────────────────────────────────────
+function noteShowState(which) {
+  for (const id of ['note-sealed', 'note-revealed', 'note-gone']) {
+    $(id).hidden = (id !== 'note-' + which);
+  }
+}
+
+function showNoteGone(reason) {
+  noteShowState('gone');
+  if (reason) $('note-gone-reason').textContent = reason;
+  showScreen('noteRead');
+}
+
+function fillCipherPreview() {
+  const el = $('cipher-preview');
+  if (!el) return;
+  let out = '';
+  for (let i = 0; i < 420; i++) out += NOTE_GLYPHS[Math.floor(Math.random() * NOTE_GLYPHS.length)];
+  el.textContent = out;
+}
+
+// Signature: der Text loest sich aus dem Rauschen heraus — zeigt, was
+// technisch gerade passiert, statt es nur zu behaupten.
+function revealDecoded(el, text, finalHtml) {
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || text.length > 1500) { el.innerHTML = finalHtml; return; }
+
+  const chars = Array.from(text);
+  const total = chars.length;
+  const FRAMES = 26;
+  let frame = 0;
+  el.classList.add('decoding');
+  const timer = setInterval(() => {
+    frame++;
+    const revealed = Math.floor(total * frame / FRAMES);
+    let out = '';
+    for (let i = 0; i < total; i++) {
+      const c = chars[i];
+      if (i < revealed || c === '\n' || c === ' ') out += c;
+      else out += NOTE_GLYPHS[Math.floor(Math.random() * NOTE_GLYPHS.length)];
+    }
+    el.textContent = out;
+    if (frame >= FRAMES) {
+      clearInterval(timer);
+      el.classList.remove('decoding');
+      el.innerHTML = finalHtml;
+    }
+  }, 28);
+}
+
+function noteReadError(msg) {
+  const el = $('note-read-error');
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+async function openNote() {
+  const btn = $('btn-note-open');
+  $('note-read-error').hidden = true;
+
+  if (noteData.hasPassword && !$('note-read-pw').value) {
+    noteReadError('Bitte gib das Passwort ein.');
+    $('note-read-pw').focus();
+    return;
+  }
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '[ ENTSCHLÜSSELE … ]';
+  try {
+    const body = {};
+    if (noteData.hasPassword) body.pwHash = await hashPassword($('note-read-pw').value);
+
+    const res = await fetch('/api/note/' + noteData.id + '/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 401) { noteReadError('Falsches Passwort.'); $('note-read-pw').select(); return; }
+    if (res.status === 404) { showNoteGone(); return; }
+    if (!res.ok)            { noteReadError('Der Server antwortet nicht. Versuch es gleich noch einmal.'); return; }
+
+    const data = await res.json();
+    let plain;
+    try {
+      plain = await noteDecrypt(data.payload, noteData.key);
+    } catch {
+      noteReadError('Entschlüsseln fehlgeschlagen — der Schlüssel im Link passt nicht zu dieser Nachricht.');
+      return;
+    }
+
+    noteData.plain = plain;
+    // Jetzt ist die Nachricht geholt — der Schluessel darf aus der URL
+    // verschwinden, ohne dass ein Neuladen vorher Schaden anrichtet.
+    history.replaceState(null, '', location.pathname);
+    noteShowState('revealed');
+    $('note-destroyed-note').textContent = data.burned
+      ? 'Diese Nachricht ist jetzt vom Server gelöscht. Sie lässt sich kein zweites Mal öffnen.'
+      : 'Diese Nachricht bleibt bis ' + noteFmtWhen(data.expiresAt) + ' abrufbar.';
+    revealDecoded($('note-body'), plain, noteRenderBody(plain));
+  } catch {
+    noteReadError('Keine Verbindung zum Server.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function initNoteFromFragment() {
+  const match = location.pathname.match(/^\/n\/([a-f0-9]{32})$/);
+  if (!match) return false;
+
+  showScreen('noteRead');
+  noteShowState('sealed');
+  fillCipherPreview();
+
+  const frag = location.hash.slice(1);
+  if (!frag) { showNoteGone('Der Link ist unvollständig — der Schlüssel hinter dem # fehlt.'); return true; }
+
+  noteData.id = match[1];
+  try { noteData.key = await importKey(frag); }
+  catch { showNoteGone('Der Schlüssel in diesem Link ist ungültig.'); return true; }
+
+  try {
+    const res = await fetch('/api/note/' + noteData.id);
+    if (!res.ok) { showNoteGone(); return true; }
+    const d = await res.json();
+    noteData.hasPassword = d.hasPassword;
+    noteData.burn        = d.burn;
+    noteData.expiresAt   = d.expiresAt;
+
+    $('note-read-pwgate').hidden = !d.hasPassword;
+    $('note-lead').innerHTML = d.burn
+      ? 'Du kannst sie <strong>einmal</strong> öffnen. Danach ist sie vom Server gelöscht.'
+      : 'Sie bleibt bis zum Ablauf der Frist lesbar.';
+    $('note-read-expiry').textContent = d.burn
+      ? 'Ungeöffnet verschwindet sie ' + noteFmtRemaining(d.expiresAt) + '.'
+      : 'Läuft ab am ' + noteFmtWhen(d.expiresAt) + '.';
+    if (d.hasPassword) $('note-read-pw').focus();
+  } catch {
+    showNoteGone('Keine Verbindung zum Server.');
+  }
+  return true;
+}
+
+// ── Verdrahtung ──────────────────────────────────────────────────────────────
+function initNoteUI() {
+  $('mode-chat').addEventListener('click', () => setHomeMode('chat'));
+  $('mode-note').addEventListener('click', () => setHomeMode('note'));
+
+  // Pfeiltasten zwischen den beiden Tabs
+  for (const id of ['mode-chat', 'mode-note']) {
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const next = id === 'mode-chat' ? 'mode-note' : 'mode-chat';
+      setHomeMode(next === 'mode-note' ? 'note' : 'chat');
+      $(next).focus();
+    });
+  }
+
+  $('note-text').addEventListener('input', updateNoteCounter);
+  $('note-text').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); createNote(); }
+  });
+  $('note-ttl').addEventListener('change', updateNoteSummary);
+  $('note-burn').addEventListener('change', updateNoteSummary);
+
+  $('note-pw').addEventListener('input', function () {
+    const pw = this.value; let s = 0;
+    if (pw.length > 6) s++; if (pw.length > 10) s++;
+    if (/[A-Z]/.test(pw)) s++; if (/[0-9]/.test(pw)) s++; if (/[^a-zA-Z0-9]/.test(pw)) s++;
+    const fill = $('note-pw-fill');
+    fill.style.width = (s / 5 * 100) + '%';
+    fill.style.background = ['', '#ff3333', '#ff8800', '#ffcc00', '#88cc00', '#00ff41'][s] || '';
+    updateNoteSummary();
+  });
+
+  [['note-pw', 'note-pw-toggle'], ['note-read-pw', 'note-read-pw-toggle']].forEach(([inp, btn]) => {
+    $(btn).addEventListener('click', () => {
+      const el = $(inp);
+      el.type = el.type === 'password' ? 'text' : 'password';
+      $(btn).setAttribute('aria-label', el.type === 'password' ? 'Passwort anzeigen' : 'Passwort verbergen');
+    });
+  });
+
+  $('btn-note-create').addEventListener('click', createNote);
+
+  $('btn-note-copy').addEventListener('click', async () => {
+    if (!noteData.link) return;
+    try {
+      await navigator.clipboard.writeText(noteData.link);
+      $('btn-note-copy').textContent = '✓ Link kopiert';
+      setTimeout(() => { $('btn-note-copy').textContent = 'Link kopieren'; }, 2500);
+    } catch {
+      const r = document.createRange();
+      r.selectNodeContents($('note-link-box'));
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      $('note-done-info').textContent = 'Markiert — jetzt mit Strg+C bzw. langem Tippen kopieren.';
+    }
+  });
+
+  $('btn-note-qr').addEventListener('click', () => { if (noteData.link) showQR(noteData.link); });
+
+  $('btn-note-again').addEventListener('click', () => {
+    noteData = { id:null, key:null, link:null, hasPassword:false, burn:true, expiresAt:0, plain:null };
+    history.replaceState(null, '', '/');
+    showScreen('home');
+    setHomeMode('note');
+    $('note-text').focus();
+  });
+
+  $('btn-note-open').addEventListener('click', openNote);
+  $('note-read-pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') openNote(); });
+
+  $('btn-note-copy-text').addEventListener('click', async () => {
+    if (!noteData.plain) return;
+    try {
+      await navigator.clipboard.writeText(noteData.plain);
+      $('btn-note-copy-text').textContent = '✓ Kopiert';
+      setTimeout(() => { $('btn-note-copy-text').textContent = 'Text kopieren'; }, 2500);
+    } catch {}
+  });
+
+  for (const id of ['btn-note-reply', 'btn-note-gone-new']) {
+    $(id).addEventListener('click', () => {
+      history.replaceState(null, '', '/');
+      showScreen('home');
+      setHomeMode('note');
+      $('note-text').focus();
+    });
+  }
+
+  updateNoteCounter();
+  updateNoteSummary();
+}

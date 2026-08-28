@@ -2255,3 +2255,34 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
   .tray-label{ font-size: .55rem; letter-spacing: .02em; }
   .tray-icons{ gap: .15rem; }
 }
+
+/* ── iOS: Zoom beim Antippen von Eingabefeldern ──────────────────────────────
+   Safari zoomt die ganze Seite hinein, sobald ein Textfeld mit weniger als
+   16px Schrift den Fokus bekommt — und zoomt danach nicht zurueck. Gemessen:
+   note-text 14,7px, sender-name 14,7px, pw-input 14,7px, die beiden
+   Auswahllisten 11,7px. Ankreuzfelder loesen es nicht aus.
+   Auf dem Desktop bleiben die Groessen wie gestaltet. */
+@media (max-width: 767px) {
+  #note-text, #sender-name, #pw-input, #note-pw, #pw-join, #note-read-pw,
+  #msg-input, .sd-select, select { font-size: 16px; }
+}
+
+/* Fehlschlag beim Versiegeln: der Knopf faellt aus dem Gruen, das Schloss
+   bleibt offen. Der volle Grund steht in der Sicherheitslage darunter. */
+.cta.fehler{background:var(--bad);box-shadow:0 0 30px rgba(255,68,56,.38);pointer-events:none}
+.cta.fehler .cta-in{color:#1a0503}
+.cta.fehler .emblem .ring{animation:none;opacity:.35}
+.cta.fehler .emblem .shackle{transform:translateY(-5px) rotate(-14deg)}
+.cta.fehler .cta-arrow{opacity:.35}
+
+/* Der Untertitel steht neben dem Logo und teilt sich die Kopfzeile mit den
+   Reitern. In seiner Spalte bleiben 260px (ab 900px) bzw. 310px (ab 1180px)
+   uebrig. Gemessen brauchte der laengere der beiden Modus-Texte dort 328px
+   und wurde mitten im Wort abgeschnitten. Beide Texte muessen einzeilig
+   passen, sonst springt die Kopfzeile beim Umschalten der Reiter. */
+@media (min-width: 900px) {
+  #screen-home .sub { font-size: .59rem; letter-spacing: .06em; }
+}
+@media (min-width: 1180px) {
+  #screen-home .sub { font-size: .65rem; letter-spacing: .105em; }
+}

@@ -1718,33 +1718,64 @@ function updateNoteCounter() {
   $('btn-note-create').disabled = $('note-text').value.trim().length === 0;
 }
 
+// Laesst eine Stufe mindestens so lange stehen, dass man sie lesen kann.
+// Verschluesseln dauert oft nur Millisekunden — ohne Mindestdauer blitzt die
+// Anzeige nur auf und der Bildschirm springt um.
+function mitMindestdauer(arbeit, ms) {
+  return Promise.all([arbeit, new Promise(r => setTimeout(r, ms))]).then(a => a[0]);
+}
+
 async function createNote() {
   const btn  = $('btn-note-create');
+  const face = btn.querySelector('.cta-face');
   const text = $('note-text').value;
   if (!text.trim()) return;
 
-  const label = btn.textContent;
+  // Nicht btn.textContent schreiben — das loescht Schloss, Beschriftung und
+  // Pfeil aus dem Knopf, und zwar dauerhaft.
+  const beschriftung = face.textContent;
+  const ruhig = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const halt  = ruhig ? 0 : 380;
+  const stufe = t => { face.textContent = t; };
+
   btn.disabled = true;
-  btn.textContent = 'Verschlüssele …';
+  btn.classList.remove('done', 'fehler');
+  btn.classList.add('busy');
+
   try {
-    const { key, b64url } = await generateKey();
+    stufe('Schlüssel wird erzeugt');
+    const { key, b64url } = await mitMindestdauer(generateKey(), halt);
     window.secShowKey && secShowKey(b64url);
-    const payload  = await noteEncrypt(text, key);
+
+    stufe('Text wird verschlüsselt');
+    const payload = await mitMindestdauer(noteEncrypt(text, key), halt);
+    window.secLog && window.secLog('Nachricht verschlüsselt', 'AES-256');
+
     const pwPlain  = $('note-pw').value;
     const pwHash   = pwPlain ? await hashPassword(pwPlain) : null;
     const ttlHours = parseInt($('note-ttl').value, 10);
     const burn     = $('note-burn').checked;
 
-    const res = await fetch('/api/note', {
+    stufe('Wird versiegelt');
+    const res = await mitMindestdauer(fetch('/api/note', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ payload, pwHash, ttlHours, burn }),
-    });
+    }), halt);
     if (res.status === 429) throw new Error('Zu viele Nachrichten in kurzer Zeit. Versuch es in ein paar Minuten noch einmal.');
     if (res.status === 503) throw new Error('Der Server ist gerade voll. Versuch es später noch einmal.');
     if (!res.ok)            throw new Error('Die Nachricht konnte nicht gespeichert werden.');
 
     const data = await res.json();
+
+    // Der Buegel rastet ein und der Knopf blitzt auf — kurz stehen lassen,
+    // damit man es sieht, dann kommt der Link.
+    btn.classList.remove('busy');
+    btn.classList.add('done');
+    stufe('Versiegelt');
+    window.secLog && window.secLog('Nachricht hinterlegt', String(data.noteId).slice(0, 8) + '…');
+    if (!ruhig) await new Promise(r => setTimeout(r, 560));
+
     showNoteDone(location.origin + '/n/' + data.noteId + '#' + b64url, data);
 
     // Klartext nicht im Formular stehen lassen
@@ -1754,10 +1785,18 @@ async function createNote() {
     updateNoteCounter();
     updateNoteSummary();
   } catch (e) {
-    alert(e.message || 'Die Nachricht konnte nicht erstellt werden.');
+    // Kein nativer Dialog — der passt weder zur Gestaltung noch zum Ablauf.
+    // Der kurze Hinweis steht im Knopf, der volle Grund in der Sicherheitslage.
+    const grund = (e && e.message) || 'Die Nachricht konnte nicht erstellt werden.';
+    window.secLog && window.secLog('Fehlgeschlagen', grund);
+    btn.classList.remove('busy', 'done');
+    btn.classList.add('fehler');
+    stufe('Fehlgeschlagen');
+    await new Promise(r => setTimeout(r, 2400));
   } finally {
+    btn.classList.remove('busy', 'done', 'fehler');
+    face.textContent = beschriftung;
     btn.disabled = false;
-    btn.textContent = label;
     updateNoteCounter();
   }
 }
@@ -2085,6 +2124,8 @@ function initNoteUI() {
   // Fingerabdruck: vier Hex-Paare aus dem SHA-256 des Schlüssels. Beide Seiten
   // sehen dieselben vier Blöcke und können sie vergleichen — so wie Signal
   // seine Sicherheitsnummern. Der Schlüssel selbst verlässt den Browser nie.
+  window.secLog = secLog;
+
   window.secShowKey = async function (b64url) {
     try {
       const raw = Uint8Array.from(

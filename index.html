@@ -237,40 +237,83 @@
         <div class="sub">Einladung verschicken</div>
       </div>
     </div>
-    <div class="card invite-preview-card">
-      <div class="invite-preview-header">
-        <span class="invite-app-icon">💬</span>
-        <span class="invite-app-name">Einladungs-Vorschau</span>
-      </div>
-      <div class="invite-bubble">
-        <div class="invite-bubble-sender" id="invite-sender-line">Einladung zum sicheren Chat</div>
-        <div class="invite-bubble-text" id="invite-text-preview"></div>
-        <div class="invite-link-card">
-          <div class="invite-link-icon">🔒</div>
-          <div class="invite-link-info">
-            <div class="invite-link-title">ephemera — Privater Chat</div>
-            <div class="invite-link-desc">Ende-zu-Ende-verschlüsselt · Kein Login · Einmalig</div>
-            <div class="invite-link-url" id="invite-link-short"></div>
+
+    <div class="hud strip"><div class="hud-in">Kein Login &#183; Max. 2 Teilnehmer &#183; Raum schliesst nach 2 Stunden</div></div>
+
+    <div class="hud panel">
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <div class="hud-in">
+
+        <div class="field">
+          <div class="field-head">
+            <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M9.8 14.2 14.2 9.8"/><path d="m11.4 7.6 1.9-1.9a3.9 3.9 0 0 1 5.5 5.5l-1.9 1.9"/><path d="m12.6 16.4-1.9 1.9a3.9 3.9 0 0 1-5.5-5.5l1.9-1.9"/></svg></span>
+            <span class="f-label">Einladungslink</span>
+          </div>
+          <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+            <div class="link-box" id="invite-link-short" tabindex="0" role="textbox" aria-readonly="true" aria-label="Einladungslink"></div>
+          </div></div>
+          <p class="key-hint"><span class="key-swatch"></span>Dieser Teil ist der Schl&#252;ssel. Er steht nur im Link &#8212; nie auf dem Server.</p>
+        </div>
+
+        <button class="cta" id="btn-copy-big" type="button">
+          <span class="cta-in">
+            <svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+              <circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/>
+              <circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/>
+              <circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/>
+              <rect x="22" y="20.5" width="12.5" height="15" rx="1.6" stroke="currentColor" stroke-width="2.2" fill="none"/>
+              <path d="M25.5 20.5v-1.6a2.5 2.5 0 0 1 5 0v1.6" stroke="currentColor" stroke-width="2.2" fill="none"/>
+              <path class="haken" d="m24.4 28.4 2.6 2.6 5-5.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+            <span class="cta-face">Einladung kopieren</span>
+            <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
+          </span>
+        </button>
+        <p class="summary" id="copy-notice-big"></p>
+
+        <div class="rule"></div>
+
+        <div class="vorschau">
+          <div class="vorschau-kopf">So sieht es beim Empf&#228;nger aus</div>
+          <div class="vorschau-karte">
+            <span class="vorschau-schloss"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9" rx="1.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg></span>
+            <div class="vorschau-text">
+              <div class="vorschau-titel" id="invite-sender-line">Einladung zum sicheren Chat</div>
+              <div class="vorschau-zeile" id="invite-text-preview"></div>
+            </div>
           </div>
         </div>
+
       </div>
     </div>
-    <div class="card">
-      <button id="btn-copy-big" class="btn btn-primary" style="width:100%;font-size:1rem;margin-bottom:.6rem">
-        📋 EINLADUNG KOPIEREN
-      </button>
-      <div id="copy-notice-big"></div>
+
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head"><span class="sec-title">So geht&#8217;s</span></div>
+        <ol class="schritte">
+          <li>Auf <b>Einladung kopieren</b> tippen</li>
+          <li>In WhatsApp, Signal oder SMS einf&#252;gen und abschicken</li>
+          <li>Auf <b>Chat &#246;ffnen</b> tippen und warten</li>
+        </ol>
+      </div>
     </div>
-    <div class="card share-howto">
-      <strong>So geht's:</strong><br>
-      1. Auf <strong style="color:var(--matrix)">EINLADUNG KOPIEREN</strong> tippen<br>
-      2. In WhatsApp / Signal / SMS einfügen und schicken<br>
-      3. Auf <strong style="color:var(--matrix)">Chat öffnen</strong> tippen &amp; warten
+
+    <div class="share-row share-row-2">
+      <button id="btn-share-qr" class="share-btn" type="button">QR-Code</button>
+      <button id="btn-open-chat" class="share-btn share-btn-prim" type="button">Chat &#246;ffnen</button>
     </div>
-    <div style="display:flex;gap:.5rem">
-      <button id="btn-share-qr"  class="btn btn-ghost"   style="flex:1">QR-CODE</button>
-      <button id="btn-open-chat" class="btn btn-primary" style="flex:2">[ CHAT ÖFFNEN ]</button>
-    </div>
+
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
   </div>
 
   <!-- PW JOIN -->

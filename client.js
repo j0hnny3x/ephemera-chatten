@@ -1315,10 +1315,10 @@ function buildInviteText(link,senderName){
 }
 
 function populateShareScreen(link,senderName){
-  const{message,shortLink,greeting}=buildInviteText(link,senderName);
+  const{message,greeting}=buildInviteText(link,senderName);
   const sl=$('invite-sender-line');if(sl)sl.textContent=greeting;
   const tp=$('invite-text-preview');if(tp)tp.textContent='Sicher · Ende-zu-Ende-verschlüsselt · Kein Login nötig';
-  const ls=$('invite-link-short');if(ls)ls.textContent=shortLink;
+  linkMitSchluessel($('invite-link-short'), link);
   return message;
 }
 
@@ -1335,8 +1335,10 @@ $('btn-create').addEventListener('click',async()=>{
     const link=`${location.origin}/r/${roomId}#${b64url}`;
     pendingRoomLink=link;
     const inviteMsg=populateShareScreen(link,senderName);
-    try{await navigator.clipboard.writeText(inviteMsg);$('copy-notice-big').textContent='✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';}
-    catch{$('copy-notice-big').textContent='Auf EINLADUNG KOPIEREN tippen';}
+    try{await navigator.clipboard.writeText(inviteMsg);
+      ctaFace($('btn-copy-big'),'Einladung kopiert',true);
+      $('copy-notice-big').textContent='In WhatsApp, Signal oder SMS einfügen und abschicken.';}
+    catch{$('copy-notice-big').textContent='Auf Einladung kopieren tippen.';}
     pendingPwHash=null;showScreen('share');startCountdown(Date.now());
   }catch{
     $('btn-create').disabled=false;$('btn-create').textContent='Sicheren Chat erstellen';
@@ -1349,7 +1351,12 @@ if($('btn-copy-big')){
     if(!pendingRoomLink)return;
     const senderName=($('sender-name')?.value||'').trim();
     const{message}=buildInviteText(pendingRoomLink,senderName);
-    try{await navigator.clipboard.writeText(message);$('btn-copy-big').textContent='✓ KOPIERT!';$('copy-notice-big').textContent='✓ EINLADUNG KOPIERT — In WhatsApp einfügen!';setTimeout(()=>$('btn-copy-big').textContent='📋 EINLADUNG KOPIEREN',2500);}
+    try{
+      await navigator.clipboard.writeText(message);
+      ctaFace($('btn-copy-big'),'Einladung kopiert',true);
+      $('copy-notice-big').textContent='In WhatsApp, Signal oder SMS einfügen und abschicken.';
+      setTimeout(()=>ctaFace($('btn-copy-big'),'Einladung kopieren',false),2500);
+    }
     catch{if($('invite-link-short')){const r=document.createRange();r.selectNode($('invite-link-short'));getSelection().removeAllRanges();getSelection().addRange(r);}}
   });
 }
@@ -1812,21 +1819,7 @@ function showNoteDone(link, data) {
   // Den Schluessel im Link sichtbar machen. Alles hinter der Raute ist der
   // Schluessel — er geht nie an den Server. Als Satz steht das schnell da und
   // wird ueberlesen; abgesetzt sieht man es.
-  const box = $('note-link-box');
-  const r = link.indexOf('#');
-  box.textContent = '';
-  if (r < 0) {
-    box.textContent = link;
-  } else {
-    const basis = document.createElement('span');
-    basis.className = 'lk-base';
-    basis.textContent = link.slice(0, r + 1);
-    const schluessel = document.createElement('span');
-    schluessel.className = 'lk-key';
-    schluessel.textContent = link.slice(r + 1);
-    box.appendChild(basis);
-    box.appendChild(schluessel);
-  }
+  linkMitSchluessel($('note-link-box'), link);
 
   const share = encodeURIComponent(noteShareText(link));
   $('share-wa').href = 'https://wa.me/?text=' + share;
@@ -1847,14 +1840,35 @@ function showNoteDone(link, data) {
     .catch(() => {});
 }
 
-// Beschriftung des Kopier-Knopfs. Nicht textContent des Knopfes schreiben —
+// Zeigt einen Link und setzt alles hinter der Raute ab — das ist der
+// Schluessel, und er geht nie an den Server. Gilt fuer Einmal-Nachricht und
+// Chat-Einladung gleichermassen.
+function linkMitSchluessel(el, link) {
+  if (!el) return;
+  el.textContent = '';
+  const r = link.indexOf('#');
+  if (r < 0) { el.textContent = link; return; }
+  const basis = document.createElement('span');
+  basis.className = 'lk-base';
+  basis.textContent = link.slice(0, r + 1);
+  const schluessel = document.createElement('span');
+  schluessel.className = 'lk-key';
+  schluessel.textContent = link.slice(r + 1);
+  el.appendChild(basis);
+  el.appendChild(schluessel);
+}
+
+// Beschriftung eines .cta-Knopfs. Nicht textContent des Knopfes schreiben —
 // das loescht Schloss, Beschriftung und Pfeil.
-function noteCopyFace(text, fertig) {
-  const btn = $('btn-note-copy');
+function ctaFace(btn, text, fertig) {
   if (!btn) return;
   const face = btn.querySelector('.cta-face');
   if (face) face.textContent = text; else btn.textContent = text;
   btn.classList.toggle('done', !!fertig);
+}
+
+function noteCopyFace(text, fertig) {
+  ctaFace($('btn-note-copy'), text, fertig);
 }
 
 

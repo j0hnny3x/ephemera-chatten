@@ -2305,7 +2305,8 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
   color:var(--dim);word-break:break-all;background:transparent;border:0;
   padding:.2rem 0;-webkit-user-select:all;user-select:all;
 }
-#note-link-box .lk-key{
+/* gilt fuer beide Linkfelder — Einmal-Nachricht und Chat-Einladung */
+#note-link-box .lk-key,#invite-link-short .lk-key{
   color:var(--acid-hi);background:rgba(43,232,32,.13);
   box-shadow:0 0 0 1px rgba(43,232,32,.28) inset;padding:.05em .12em;
 }
@@ -2446,3 +2447,71 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
 #screen-note-done>.hud.strip:first-of-type{margin-block:auto}
 #screen-note-done>.hud.strip:first-of-type{margin-bottom:0}
 #screen-note-read>.foot-strip,#screen-note-done>.foot-strip{margin-top:auto}
+
+/* ── Einladungsbildschirm ────────────────────────────────────────────────────
+   Der letzte Bildschirm im alten Look: Emoji-Grossbuchstaben auf dem Knopf,
+   eckige Klammern, und eine Anleitung, deren Fliesstext mit 3,07:1 gegen den
+   Grund praktisch unsichtbar war (AA verlangt 4,5:1). */
+#screen-share{
+  max-width:760px;margin:0 auto;padding:.9rem .9rem 1rem;
+  gap:.55rem;justify-content:flex-start;
+}
+#screen-share .logo-wrap{margin-bottom:.2rem}
+#screen-share .sec{align-self:stretch;grid-area:auto}
+#screen-share .sec .sec-title{display:block}
+#screen-share .sec .hud-in::after{content:none}
+#screen-share>.foot-strip{margin-top:auto}
+#invite-link-short{
+  font-family:var(--mono);font-size:.78rem;line-height:1.75;
+  color:var(--dim);word-break:break-all;
+}
+
+/* Die drei Schritte sind eine echte Reihenfolge — hier tragen die Ziffern
+   Information und duerfen bleiben. */
+.schritte{
+  margin:0;padding:0;list-style:none;counter-reset:schritt;
+  display:flex;flex-direction:column;gap:.42rem;
+}
+.schritte li{
+  counter-increment:schritt;display:flex;gap:.55rem;align-items:baseline;
+  font-family:var(--mono);font-size:.72rem;line-height:1.55;color:var(--dim);
+}
+.schritte li::before{
+  content:counter(schritt);flex:0 0 auto;
+  min-width:1.35rem;height:1.35rem;display:grid;place-items:center;
+  border:1px solid var(--edge-soft);color:var(--acid);
+  font-size:.66rem;line-height:1;
+}
+.schritte b{color:var(--acid-hi);font-weight:400}
+
+/* Was der andere im Messenger sieht */
+.vorschau-kopf{
+  font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--quiet);margin-bottom:.34rem;
+}
+.vorschau-karte{
+  --c:6px;display:flex;gap:.6rem;align-items:center;padding:.55rem .65rem;
+  background:#020602;border:1px solid var(--line);
+  clip-path:polygon(var(--c) 0,100% 0,100% calc(100% - var(--c)),calc(100% - var(--c)) 100%,0 100%,0 var(--c));
+}
+.vorschau-schloss{flex:0 0 auto;width:26px;height:26px;color:var(--edge)}
+.vorschau-schloss svg{width:100%;height:100%}
+.vorschau-text{min-width:0}
+.vorschau-titel{
+  font-family:var(--disp);font-weight:600;font-size:.8rem;color:var(--acid-hi);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.vorschau-zeile{
+  font-family:var(--mono);font-size:.66rem;line-height:1.45;color:var(--quiet);
+  margin-top:.1rem;
+}
+
+@media (min-width:900px){
+  #screen-share{max-width:640px}
+  #invite-link-short{font-size:.82rem}
+}
+
+/* .link-box stammt aus dem alten Aufbau und ist display:flex — Basis und
+   Schluessel wurden dadurch zu zwei Flex-Elementen nebeneinander statt zu
+   fortlaufendem Text. Hier fliesst der Link wieder normal um. */
+#note-link-box,#invite-link-short{display:block}

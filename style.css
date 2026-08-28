@@ -2286,3 +2286,163 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
 @media (min-width: 1180px) {
   #screen-home .sub { font-size: .65rem; letter-spacing: .105em; }
 }
+
+/* ── Bildschirm "Link verschicken" ───────────────────────────────────────────
+   Vorher standen hier schlichte Karten mit Fliesstext und unterstrichenen
+   Links — der Bildschirm sah aus wie aus einem anderen Programm. Jetzt
+   dieselben Bausteine wie auf der Startseite: Streifen, Panel mit Kerben,
+   Konsole, Fussleiste. */
+#screen-note-done{
+  max-width:760px;margin:0 auto;padding:.9rem .9rem 1rem;
+  gap:.55rem;justify-content:center;
+}
+#screen-note-done .logo-wrap{margin-bottom:.2rem}
+
+/* Der Link, und darin sichtbar der Schluessel. Die Aussage "der Link ist der
+   Schluessel" steht sonst nur als Satz da — so kann man sie sehen. */
+#note-link-box{
+  font-family:var(--mono);font-size:.78rem;line-height:1.75;
+  color:var(--dim);word-break:break-all;background:transparent;border:0;
+  padding:.2rem 0;-webkit-user-select:all;user-select:all;
+}
+#note-link-box .lk-key{
+  color:var(--acid-hi);background:rgba(43,232,32,.13);
+  box-shadow:0 0 0 1px rgba(43,232,32,.28) inset;padding:.05em .12em;
+}
+#note-link-box:focus-visible{outline:2px solid var(--acid);outline-offset:3px}
+.key-hint{
+  display:flex;align-items:flex-start;gap:.4rem;margin:.42rem 0 0;
+  font-family:var(--mono);font-size:.66rem;line-height:1.5;color:var(--quiet);
+}
+.key-swatch{
+  flex:0 0 auto;width:.62rem;height:.62rem;margin-top:.2rem;
+  background:rgba(43,232,32,.13);box-shadow:0 0 0 1px rgba(43,232,32,.45) inset;
+}
+
+/* Der Haken im Schloss erscheint erst, wenn kopiert wurde */
+.cta .haken{opacity:0;transition:opacity var(--fast) var(--ease)}
+.cta.done .haken{opacity:1}
+
+/* Weitergeben: drei gleich breite Kerbknoepfe, keine Unterstreichung */
+.share-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem}
+.share-btn{
+  --c:6px;display:flex;align-items:center;justify-content:center;
+  min-height:44px;padding:.5rem .3rem;cursor:pointer;text-decoration:none;
+  background:#020602;border:1px solid var(--edge-soft);color:var(--acid);
+  clip-path:polygon(var(--c) 0,100% 0,100% calc(100% - var(--c)),calc(100% - var(--c)) 100%,0 100%,0 var(--c));
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease),
+             transform var(--fast) var(--spring);
+}
+.share-btn:hover{border-color:var(--acid);background:rgba(43,232,32,.1)}
+.share-btn:active{transform:scale(.96)}
+.share-btn:focus-visible{outline:2px solid var(--acid-hi);outline-offset:3px}
+
+/* Hinweistext in der Konsole — knapp, einfarbig, ohne Zeitstempel, denn
+   hier passiert nichts, was man protokollieren muesste. */
+.hinweis{font-family:var(--mono);font-size:.7rem;line-height:1.6;color:var(--quiet)}
+.hinweis p{margin:.2rem 0}
+
+/* Nachgeordnete Aktion: volle Breite, aber ruhig */
+.ghost-wide{
+  --c:8px;width:100%;min-height:46px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  clip-path:polygon(var(--c) 0,100% 0,100% calc(100% - var(--c)),calc(100% - var(--c)) 100%,0 100%,0 var(--c));
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;
+  transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.ghost-wide:hover{border-color:var(--edge-soft);color:var(--acid)}
+.ghost-wide:focus-visible{outline:2px solid var(--acid-hi);outline-offset:3px}
+
+@media (min-width:900px){
+  #screen-note-done{max-width:640px}
+  #note-link-box{font-size:.82rem}
+}
+
+/* Die Konsole ist fuer die Seitenspalte der Startseite gebaut: align-self:start
+   verhindert dort das Strecken. Auf diesem Bildschirm steht sie in einer
+   Flex-Spalte und wuerde dadurch auf Inhaltsbreite zusammenfallen. Der
+   Verlauf am Fuss gehoert zum mitlaufenden Protokoll und hat hier nichts zu
+   verdunkeln. */
+#screen-note-done .sec{align-self:stretch;grid-area:auto}
+#screen-note-done .sec .sec-title{display:block}
+#screen-note-done .sec .hud-in::after{content:none}
+
+/* ── Bildschirm "Einmal-Nachricht lesen" ─────────────────────────────────────
+   Vorher: eine Wand aus 420 zufaelligen Zeichen ueber dem Knopf. Die war reine
+   Dekoration — nicht der echte Geheimtext — und sah aus wie ein Fehler.
+   Jetzt zeigt der Bildschirm schlicht, dass eine Nachricht bereitliegt. */
+#screen-note-read{
+  max-width:760px;margin:0 auto;padding:.9rem .9rem 1rem;
+  gap:.55rem;justify-content:center;
+}
+#screen-note-read .logo-wrap{margin-bottom:.2rem}
+#screen-note-read>div[id]{display:flex;flex-direction:column;gap:.55rem}
+#screen-note-read>div[hidden]{display:none}
+#screen-note-read .sec{align-self:stretch;grid-area:auto}
+#screen-note-read .sec .sec-title{display:block}
+#screen-note-read .sec .hud-in::after{content:none}
+
+.lead{
+  font-family:var(--mono);font-size:.74rem;line-height:1.6;color:var(--dim);
+  margin:.15rem 0 0;
+}
+.lead strong{color:var(--acid-hi);font-weight:400}
+
+.note-error{
+  font-family:var(--mono);font-size:.7rem;line-height:1.5;color:var(--bad);
+  border-left:2px solid var(--bad);padding:.3rem .5rem;margin:.1rem 0;
+  background:rgba(255,68,56,.07);
+}
+
+#note-body{
+  font-family:var(--mono);font-size:.85rem;line-height:1.7;color:var(--acid-hi);
+  white-space:pre-wrap;word-break:break-word;
+}
+#note-body.decoding{color:var(--edge)}
+
+.share-row-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.share-btn-prim{
+  background:var(--acid);border-color:var(--acid);color:var(--ink);
+  box-shadow:0 0 22px rgba(43,232,32,.32);
+}
+.share-btn-prim:hover{background:var(--acid-hi);border-color:var(--acid-hi)}
+
+/* Nichts mehr da: das ist kein Fehler, sondern der vorgesehene Ausgang —
+   deshalb im Gruen der Oberflaeche und nicht in Warnrot wie vorher. */
+.gone-panel .hud-in{align-items:center;text-align:center;gap:.7rem;padding:1.5rem 1rem}
+.gone-mark{width:64px;height:64px;color:var(--edge-soft)}
+.gone-mark svg{width:100%;height:100%}
+.gone-mark svg path:last-child{
+  stroke:var(--dim);stroke-dasharray:22;stroke-dashoffset:22;
+  animation:strichZiehen .62s var(--ease) .25s forwards;
+}
+@keyframes strichZiehen{to{stroke-dashoffset:0}}
+.gone-title{
+  font-family:var(--disp);font-weight:700;font-size:1.5rem;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--dim);line-height:1.1;
+}
+.gone-panel .lead{text-align:center;max-width:34ch}
+.gone-panel .ghost-wide{margin-top:.4rem;max-width:22rem}
+
+/* Ruhiges Auftauchen der Zustaende, statt hartem Umschalten */
+#note-sealed,#note-revealed,#note-gone{animation:zustandAuf .34s var(--ease) both}
+@keyframes zustandAuf{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+
+@media (prefers-reduced-motion:reduce){
+  .gone-mark svg path:last-child{animation:none;stroke-dashoffset:0}
+  #note-sealed,#note-revealed,#note-gone{animation:none}
+}
+@media (min-width:900px){
+  #screen-note-read{max-width:640px}
+  #note-body{font-size:.9rem}
+}
+
+/* Logo oben, Inhalt optisch mittig, Fussleiste unten — ohne display an einer
+   ID zu setzen. Eine ID-Regel mit display schlaegt sonst .screen.active und
+   der Bildschirm bleibt sichtbar, wenn ein anderer aktiv ist. */
+#screen-note-read,#screen-note-done{justify-content:flex-start}
+#screen-note-read>div[id]:not([hidden]),
+#screen-note-done>.hud.strip:first-of-type{margin-block:auto}
+#screen-note-done>.hud.strip:first-of-type{margin-bottom:0}
+#screen-note-read>.foot-strip,#screen-note-done>.foot-strip{margin-top:auto}

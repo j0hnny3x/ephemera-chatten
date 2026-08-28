@@ -513,24 +513,72 @@
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-title">Dein Link</div>
-      <div class="link-box" id="note-link-box" tabindex="0" role="textbox" aria-readonly="true" aria-label="Link zur Nachricht"></div>
-      <button id="btn-note-copy" class="btn btn-primary btn-block">Link kopieren</button>
-      <div class="share-row">
-        <a id="share-wa" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">WhatsApp</a>
-        <a id="share-tg" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">Telegram</a>
-        <button id="btn-note-qr" class="btn btn-ghost" type="button">QR-Code</button>
+    <div class="hud strip"><div class="hud-in" id="note-done-info">&#8203;</div></div>
+
+    <div class="hud panel">
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <div class="hud-in">
+
+        <div class="field">
+          <div class="field-head">
+            <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M9.8 14.2 14.2 9.8"/><path d="m11.4 7.6 1.9-1.9a3.9 3.9 0 0 1 5.5 5.5l-1.9 1.9"/><path d="m12.6 16.4-1.9 1.9a3.9 3.9 0 0 1-5.5-5.5l1.9-1.9"/></svg></span>
+            <span class="f-label">Dein Link</span>
+          </div>
+          <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+            <div class="link-box" id="note-link-box" tabindex="0" role="textbox" aria-readonly="true" aria-label="Link zur Nachricht"></div>
+          </div></div>
+          <p class="key-hint"><span class="key-swatch"></span>Dieser Teil ist der Schl&#252;ssel. Er steht nur im Link &#8212; nie auf dem Server.</p>
+        </div>
+
+        <button class="cta" id="btn-note-copy" type="button">
+          <span class="cta-in">
+            <svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+              <circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/>
+              <circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/>
+              <circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/>
+              <rect x="22" y="20.5" width="12.5" height="15" rx="1.6" stroke="currentColor" stroke-width="2.2" fill="none"/>
+              <path d="M25.5 20.5v-1.6a2.5 2.5 0 0 1 5 0v1.6" stroke="currentColor" stroke-width="2.2" fill="none"/>
+              <path class="haken" d="m24.4 28.4 2.6 2.6 5-5.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+            <span class="cta-face">Link kopieren</span>
+            <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
+          </span>
+        </button>
+
+        <div class="rule"></div>
+
+        <div class="share-row">
+          <a id="share-wa" class="share-btn" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+          <a id="share-tg" class="share-btn" target="_blank" rel="noopener noreferrer">Telegram</a>
+          <button id="btn-note-qr" class="share-btn" type="button">QR-Code</button>
+        </div>
+
       </div>
-      <p class="note-foot" id="note-done-info"></p>
     </div>
 
-    <div class="card note-warn">
-      <div class="card-title">Der Link ist der Schlüssel</div>
-      <p>Er steht nur hier. Wir haben ihn nicht und können ihn nicht wiederherstellen — kopier ihn, bevor du diese Seite verlässt.</p>
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head"><span class="sec-title">Einmal und nie wieder</span></div>
+        <div class="hinweis">
+          <p>Wir haben den Schl&#252;ssel nicht und k&#246;nnen ihn nicht wiederherstellen.</p>
+          <p>Kopier den Link, bevor du diese Seite verl&#228;sst.</p>
+        </div>
+      </div>
     </div>
 
-    <button id="btn-note-again" class="btn btn-ghost btn-block">Weitere Nachricht schreiben</button>
+    <button id="btn-note-again" class="ghost-wide" type="button">Weitere Nachricht schreiben</button>
+
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
   </div>
 
   <!-- EINMAL-NACHRICHT: LESEN -->
@@ -544,46 +592,114 @@
     </div>
 
     <!-- Zustand 1: versiegelt -->
-    <div class="card" id="note-sealed">
-      <div class="card-title">Verschlüsselte Nachricht</div>
-      <p class="note-lead" id="note-lead">Du kannst sie <strong>einmal</strong> öffnen. Danach ist sie vom Server gelöscht.</p>
+    <div id="note-sealed">
+      <div class="hud strip"><div class="hud-in" id="note-read-expiry">&#8203;</div></div>
 
-      <div class="cipher-block" id="cipher-preview" aria-hidden="true"></div>
+      <div class="hud panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
 
-      <div class="opt-pw" id="note-read-pwgate" hidden>
-        <label class="opt-label" for="note-read-pw">Passwort</label>
-        <div class="pw-row">
-          <input id="note-read-pw" type="password" placeholder="Passwort …"
-            autocomplete="current-password" maxlength="128">
-          <button id="note-read-pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M3.5 7.5h17v11h-17z"/><path d="m3.5 8 8.5 6 8.5-6"/></svg></span>
+              <span class="f-label">Versiegelte Nachricht</span>
+            </div>
+            <p class="lead" id="note-lead">Du kannst sie <strong>einmal</strong> &#246;ffnen. Danach ist sie vom Server gel&#246;scht.</p>
+          </div>
+
+          <div id="note-read-pwgate" hidden>
+            <div class="rule"></div>
+            <div class="opt-row"><span class="opt-name"><label for="note-read-pw">Passwort</label></span></div>
+            <div class="pw-row">
+              <input class="inp" id="note-read-pw" type="password" placeholder="Passwort &#8230;"
+                autocomplete="current-password" maxlength="128">
+              <button id="note-read-pw-toggle" class="eye" type="button" aria-label="Passwort anzeigen">&#128065;</button>
+            </div>
+          </div>
+
+          <div class="note-error" id="note-read-error" role="alert" hidden></div>
+
+          <button class="cta" id="btn-note-open" type="button">
+            <span class="cta-in">
+              <svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+              <circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/>
+              <circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/>
+              <circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/>
+              <path class="shackle" d="M23.2 27v-3.6a4.8 4.8 0 0 1 9.6 0V27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+              <rect x="20.4" y="26.6" width="15.2" height="10.6" rx="1.7" fill="currentColor"/>
+              <circle cx="28" cy="31" r="1.5" fill="var(--acid)"/>
+            </svg>
+              <span class="cta-face">Nachricht &#246;ffnen</span>
+              <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
+            </span>
+          </button>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Zustand 2: ge&#246;ffnet -->
+    <div id="note-revealed" hidden>
+      <div class="hud panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
+
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 4h16v13H8l-4 3.5z"/><path d="M8 9h8M8 13h5"/></svg></span>
+              <span class="f-label" id="note-revealed-title">Nachricht</span>
+            </div>
+            <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+              <div class="note-body" id="note-body"></div>
+            </div></div>
+          </div>
+
+          <div class="rule"></div>
+
+          <div class="share-row share-row-2">
+            <button id="btn-note-copy-text" class="share-btn" type="button">Text kopieren</button>
+            <button id="btn-note-reply" class="share-btn share-btn-prim" type="button">Antworten</button>
+          </div>
+
         </div>
       </div>
 
-      <div class="note-error" id="note-read-error" role="alert" hidden></div>
-
-      <button id="btn-note-open" class="btn btn-primary btn-block">[ NACHRICHT ÖFFNEN ]</button>
-      <p class="note-foot" id="note-read-expiry"></p>
-    </div>
-
-    <!-- Zustand 2: geöffnet -->
-    <div class="card" id="note-revealed" hidden>
-      <div class="card-title" id="note-revealed-title">Nachricht</div>
-      <div class="note-body" id="note-body"></div>
-      <div class="share-row">
-        <button id="btn-note-copy-text" class="btn btn-ghost" type="button">Text kopieren</button>
-        <button id="btn-note-reply" class="btn btn-primary" type="button">Antworten</button>
+      <div class="hud sec">
+        <span class="tick tick-tl"></span>
+        <div class="hud-in">
+          <div class="sec-head"><span class="sec-title">Danach</span></div>
+          <div class="hinweis"><p id="note-destroyed-note"></p></div>
+        </div>
       </div>
-      <p class="note-foot" id="note-destroyed-note"></p>
     </div>
 
     <!-- Zustand 3: weg -->
-    <div class="card closed-card" id="note-gone" hidden>
-      <div class="closed-icon">[ ]</div>
-      <h1>NICHTS<br>MEHR DA</h1>
-      <p id="note-gone-reason">Diese Nachricht wurde bereits gelesen oder ist abgelaufen.</p>
-      <br>
-      <button id="btn-note-gone-new" class="btn btn-primary btn-block">Eigene Nachricht schreiben</button>
+    <div id="note-gone" hidden>
+      <div class="hud panel gone-panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
+          <div class="gone-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 7.5h17v11h-17z"/><path d="m3.5 8 8.5 6 8.5-6"/><path d="m6 6 12 14"/></svg>
+          </div>
+          <div class="gone-title">Nichts mehr da</div>
+          <p class="lead" id="note-gone-reason">Diese Nachricht wurde bereits gelesen oder ist abgelaufen.</p>
+          <button id="btn-note-gone-new" class="ghost-wide" type="button">Eigene Nachricht schreiben</button>
+        </div>
+      </div>
     </div>
+
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
   </div>
 
   <!-- CLOSED -->

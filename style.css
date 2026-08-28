@@ -1637,6 +1637,11 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
   min-height:100dvh;padding:.9rem .9rem 1rem;
   display:grid;align-content:center;gap:.55rem;
   grid-template-areas:"brand" "modes" "main" "side" "foot"}
+/* Die Regel darueber setzt display:grid an einer ID. Das schlaegt
+   .screen.active, also blieb die Startseite auch dann stehen, wenn ein
+   anderer Bildschirm aktiv war — der Einladungsbildschirm lag dahinter
+   ausserhalb des Fensters und war nicht erreichbar. */
+#screen-home:not(.active){display:none}
 .head{grid-area:brand}
 .modes-wrap{grid-area:modes}
 .pane{grid-area:main}

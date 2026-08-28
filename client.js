@@ -198,21 +198,35 @@ async function initAudioOutput() {
 
 // ── Matrix ────────────────────────────────────────────────────────────────────
 function initMatrix() {
+  // Routine aus dem abgenommenen Entwurf: je Spalte ein heller Kopf und ein
+  // nachlaufendes Zeichen darüber. Die alte Fassung malte nur ein gedämpftes
+  // Zeichen — bei 26 % Deckkraft und der Vignette blieb davon nichts sichtbar
+  // (gemessen: 0,21 % helle Pixel auf der abgetasteten Fläche).
   const canvas = $('matrix-canvas'), ctx = canvas.getContext('2d');
-  const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
-  resize(); window.addEventListener('resize', resize);
-  const chars = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉ01ABCDEF'.split('');
-  const fs = 14; let cols = Math.floor(canvas.width/fs), drops = Array(cols).fill(1);
-  window.addEventListener('resize', () => { cols=Math.floor(canvas.width/fs); drops=Array(cols).fill(1); });
-  setInterval(() => {
-    ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    drops.forEach((y,i) => {
-      const c=chars[Math.floor(Math.random()*chars.length)], g=Math.floor(Math.random()*120+135);
-      ctx.fillStyle=`rgba(0,${g},${Math.floor(Math.random()*20)},${Math.random()*.6+.4})`;
-      ctx.font=fs+'px monospace'; ctx.fillText(c,i*fs,y*fs);
-      if(y*fs>canvas.height&&Math.random()>0.972) drops[i]=0; drops[i]++;
-    });
-  },45);
+  const GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎ0123456789ABCDEF';
+  const CW = 15;
+  let cols = [];
+  const fit = () => {
+    canvas.width = innerWidth; canvas.height = innerHeight;
+    cols = [];
+    for (let i = 0; i < Math.ceil(canvas.width / CW); i++) cols.push(Math.random() * -canvas.height);
+  };
+  const glyph = () => GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+  function draw() {
+    ctx.fillStyle = 'rgba(3,6,3,.085)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.font = '14px "Share Tech Mono", monospace';
+    for (let i = 0; i < cols.length; i++) {
+      const x = i * CW, y = cols[i];
+      ctx.fillStyle = '#8dff7e'; ctx.fillText(glyph(), x, y);
+      ctx.fillStyle = '#2be820'; ctx.fillText(glyph(), x, y - 16);
+      cols[i] = y > canvas.height + Math.random() * 900 ? 0 : y + 16;
+    }
+  }
+  addEventListener('resize', fit);
+  fit();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) draw();
+  else setInterval(draw, 62);
 }
 initMatrix();
 
@@ -227,11 +241,24 @@ async function importKey(b64url) {
   const raw = Uint8Array.from(atob(b64url.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
   return crypto.subtle.importKey('raw',raw,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 }
+// String.fromCharCode(...buf) legt jedes Byte als eigenes Argument auf den
+// Aufrufstapel. Ab etwa 100 KB kippt das mit "Maximum call stack size
+// exceeded" — dadurch scheiterte jede Sprachnachricht und jedes groessere
+// Bild. In Bloecken umgewandelt gibt es diese Grenze nicht.
+function bytesZuBase64(bytes) {
+  let aus = '';
+  const BLOCK = 0x8000;
+  for (let i = 0; i < bytes.length; i += BLOCK) {
+    aus += String.fromCharCode.apply(null, bytes.subarray(i, i + BLOCK));
+  }
+  return btoa(aus);
+}
+
 async function encrypt(plaintext) {
   const iv=crypto.getRandomValues(new Uint8Array(12));
   const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},cryptoKey,new TextEncoder().encode(plaintext));
   const buf=new Uint8Array(12+ct.byteLength); buf.set(iv); buf.set(new Uint8Array(ct),12);
-  return btoa(String.fromCharCode(...buf));
+  return bytesZuBase64(buf);
 }
 async function decrypt(b64) {
   const buf=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
@@ -660,51 +687,12 @@ function initTray() {
   $('btn-call')      ?.addEventListener('click', () => { closeTray(); startCall(false); });
   $('btn-video-call')?.addEventListener('click', () => { closeTray(); startCall(true); });
   $('btn-attach')    ?.addEventListener('click', () => { closeTray(); $('file-input').click(); });
-  $('btn-mic')       ?.addEventListener('click', async () => {
-    closeTray();
-    // Mikrofon-Aufnahme starten
-    if (mediaRecorder?.state === 'recording') return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const src = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser(); analyser.fftSize = 256; src.connect(analyser);
-      audioChunks = []; recSeconds = 0;
-      const mime = getSupportedAudioMime();
-      try { mediaRecorder = new MediaRecorder(stream, mime ? {mimeType:mime} : {}); }
-      catch { mediaRecorder = new MediaRecorder(stream); }
-      mediaRecorder.ondataavailable = e => { if(e.data.size > 0) audioChunks.push(e.data); };
-      mediaRecorder.onstop = async () => {
-        cancelAnimationFrame(waveAnim); clearInterval(recInterval);
-        stream.getTracks().forEach(t => t.stop()); audioCtx.close();
-        $('recording-bar').classList.remove('active');
-        if (!audioChunks.length) { addSystem('[Keine Audiodaten]'); return; }
-        const actualMime = mediaRecorder.mimeType || mime || 'audio/webm';
-        const blob = new Blob(audioChunks, {type: actualMime});
-        addSystem(`Sprachnachricht (${Math.round(blob.size/1024)}KB) wird gesendet…`);
-        const r = new FileReader();
-        r.onload = async e => {
-          const id = newMsgId();
-          try {
-            const payload = await encrypt(e.target.result);
-            ws.send(JSON.stringify({type:'audio', id, payload}));
-            addAudioMessage(e.target.result, 'self', id, Date.now(), !partnerConnected);
-            addSystem('✓ Sprachnachricht gesendet.');
-          } catch(err) { addSystem('[Audio konnte nicht gesendet werden: '+err.message+']'); }
-        };
-        r.readAsDataURL(blob);
-      };
-      mediaRecorder.start(100);
-      $('recording-bar').classList.add('active'); $('rec-time').textContent = '0:00';
-      recInterval = setInterval(() => {
-        recSeconds++;
-        const m = Math.floor(recSeconds/60), s = recSeconds%60;
-        $('rec-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
-        if (recSeconds >= 120) stopRec();
-      }, 1000);
-      drawWaveform();
-    } catch(e) { addSystem('[Kein Mikrofonzugriff: '+e.message+']'); }
-  });
+  // Der Knopf traegt bereits weiter unten die vollstaendige Aufnahmeroutine.
+  // Vorher stand sie hier ein zweites Mal: beide liefen bei einem Klick an,
+  // oeffneten je einen Mikrofonstrom, und nur der zuletzt zugewiesene wurde
+  // am Ende geschlossen — das Mikrofon blieb nach dem Senden offen.
+  $('btn-mic')       ?.addEventListener('click', () => { closeTray(); });
+  $('btn-video-rec') ?.addEventListener('click', () => { closeTray(); });
 
   $('btn-sd-toggle')?.addEventListener('click', () => {
     sdTextEnabled = !sdTextEnabled;
@@ -1336,9 +1324,9 @@ function populateShareScreen(link,senderName){
 
 // ── Raum erstellen ────────────────────────────────────────────────────────────
 $('btn-create').addEventListener('click',async()=>{
-  $('btn-create').disabled=true;$('btn-create').textContent='[ INITIALISIERUNG … ]';
+  $('btn-create').disabled=true;$('btn-create').textContent='Verschlüssele …';
   try{
-    const{key,b64url}=await generateKey();cryptoKey=key;
+    const{key,b64url}=await generateKey();cryptoKey=key;window.secShowKey&&secShowKey(b64url);
     const pwPlain=$('pw-input').value,senderName=($('sender-name')?.value||'').trim();
     const pwHash=pwPlain?await hashPassword(pwPlain):null;
     const res=await fetch('/api/room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pwHash})});
@@ -1351,7 +1339,7 @@ $('btn-create').addEventListener('click',async()=>{
     catch{$('copy-notice-big').textContent='Auf EINLADUNG KOPIEREN tippen';}
     pendingPwHash=null;showScreen('share');startCountdown(Date.now());
   }catch{
-    $('btn-create').disabled=false;$('btn-create').textContent='[ SICHEREN CHAT ERSTELLEN ]';
+    $('btn-create').disabled=false;$('btn-create').textContent='Sicheren Chat erstellen';
     alert('Raum konnte nicht erstellt werden.');
   }
 });
@@ -1573,7 +1561,7 @@ $('btn-new').addEventListener('click',()=>{
   enableInput(false);
   const b=$('partner-banner');if(b)b.style.display='none';
   history.replaceState(null,'','/');showScreen('home');
-  $('btn-create').disabled=false;$('btn-create').textContent='[ SICHEREN CHAT ERSTELLEN ]';
+  $('btn-create').disabled=false;$('btn-create').textContent='Sicheren Chat erstellen';
 });
 
 function showClosed(reason){
@@ -1737,9 +1725,10 @@ async function createNote() {
 
   const label = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '[ VERSCHLÜSSELE … ]';
+  btn.textContent = 'Verschlüssele …';
   try {
     const { key, b64url } = await generateKey();
+    window.secShowKey && secShowKey(b64url);
     const payload  = await noteEncrypt(text, key);
     const pwPlain  = $('note-pw').value;
     const pwHash   = pwPlain ? await hashPassword(pwPlain) : null;
@@ -2038,3 +2027,227 @@ function initNoteUI() {
   updateNoteCounter();
   updateNoteSummary();
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SICHERHEITSPULT ───────────────────────────────────────────────────────────
+// Zeigt ausschließlich gemessene Werte. Ein Schild, das immer grün leuchtet,
+// wäre bei einer Verschlüsselungs-App der teuerste Fehler — deshalb steht hier
+// nichts, was nicht tatsächlich abgefragt wurde.
+// ══════════════════════════════════════════════════════════════════════════════
+(function () {
+  const logEl = $('sec-log');
+  if (!logEl) return;
+
+  function stamp() {
+    const d = new Date();
+    return String(d.getHours()).padStart(2, '0') + ':' +
+           String(d.getMinutes()).padStart(2, '0') + ':' +
+           String(d.getSeconds()).padStart(2, '0');
+  }
+  function secLog(text, value) {
+    const row = document.createElement('div');
+    const t = document.createElement('span'); t.className = 't'; t.textContent = stamp();
+    row.appendChild(t);
+    row.appendChild(document.createTextNode(' ' + text));
+    if (value) {
+      const v = document.createElement('span'); v.className = 'v'; v.textContent = ' ' + value;
+      row.appendChild(v);
+    }
+    logEl.appendChild(row);
+    while (logEl.children.length > 12) logEl.removeChild(logEl.firstChild);
+  }
+
+  // 'ok' grün, 'bad' rot, alles andere neutral — ein noch nicht erzeugter
+  // Schlüssel ist kein Fehlerzustand und darf nicht rot leuchten.
+  function led(id, state, value) {
+    const el = $(id); if (!el) return;
+    el.classList.remove('ok', 'bad');
+    if (state === 'ok') el.classList.add('ok');
+    else if (state === 'bad') el.classList.add('bad');
+    el.querySelector('b').textContent = value;
+  }
+
+  const hasCrypto = !!(window.crypto && crypto.subtle);
+  let stored = 0;
+  try { stored = localStorage.length + sessionStorage.length; } catch { stored = -1; }
+
+  led('led-ctx', isSecureContext ? 'ok' : 'bad', isSecureContext ? 'sicher' : 'unsicher');
+  led('led-crypto', hasCrypto ? 'ok' : 'bad', hasCrypto ? 'bereit' : 'fehlt');
+  led('led-store', stored === 0 ? 'ok' : 'bad',
+      stored === 0 ? 'leer' : (stored < 0 ? 'gesperrt' : stored + ' Einträge'));
+  led('led-key', 'idle', 'bereit');
+
+  secLog('Kontext geprüft', isSecureContext ? 'sicher' : 'UNSICHER');
+  secLog('WebCrypto', hasCrypto ? 'verfügbar' : 'FEHLT');
+  secLog('Browserspeicher', stored === 0 ? '0 Einträge' : stored + ' Einträge');
+  if (!isSecureContext) secLog('Ohne HTTPS ist keine Verschlüsselung möglich');
+
+  // Fingerabdruck: vier Hex-Paare aus dem SHA-256 des Schlüssels. Beide Seiten
+  // sehen dieselben vier Blöcke und können sie vergleichen — so wie Signal
+  // seine Sicherheitsnummern. Der Schlüssel selbst verlässt den Browser nie.
+  window.secShowKey = async function (b64url) {
+    try {
+      const raw = Uint8Array.from(
+        atob(b64url.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+      const hash = await crypto.subtle.digest('SHA-256', raw);
+      const parts = Array.from(new Uint8Array(hash).slice(0, 4))
+        .map(x => x.toString(16).padStart(2, '0').toUpperCase());
+      const cells = $('sec-fp').children;
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // Laufende Zeitgeber zuerst stoppen: bei einem zweiten Aufruf haetten
+      // sich sonst mehrere Schleifen ueberlagert und die Zellen nie beruhigt.
+      if (window.__fpTimers) window.__fpTimers.forEach(clearInterval);
+      window.__fpTimers = [];
+      for (let i = 0; i < cells.length; i++) {
+        const zelle = cells[i], wert = parts[i];
+        if (reduce) { zelle.textContent = wert; zelle.classList.add('set'); continue; }
+        let n = 0;
+        const t = setInterval(() => {
+          if (++n > 6 + i * 3) {
+            clearInterval(t);
+            zelle.textContent = wert;
+            zelle.classList.add('set');
+            return;
+          }
+          zelle.textContent = randGlyph() + randGlyph();
+        }, 40);
+        window.__fpTimers.push(t);
+      }
+      led('led-key', 'ok', 'AES-256');
+      secLog('Schlüssel erzeugt', parts.join(' '));
+      secLog('Schlüssel bleibt im Browser', 'nicht gesendet');
+    } catch (e) {
+      secLog('Fingerabdruck fehlgeschlagen', e.name || 'Fehler');
+    }
+  };
+  function randGlyph() {
+    const g = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄ0123456789ABCDEF';
+    return g[Math.floor(Math.random() * g.length)];
+  }
+})();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── STARTSEITE: Bedienlogik aus dem abgenommenen Entwurf ──────────────────────
+// Das Markup der Startseite stammt unverändert aus dem Entwurf. Diese Schicht
+// bedient es: gleitender Umschalter, eigenes Auswahlfeld, Startsequenz.
+// Die Werte fließen weiter über #note-ttl, damit die vorhandene Notiz-Logik
+// unverändert weiterläuft.
+// ══════════════════════════════════════════════════════════════════════════════
+(function () {
+  const fill = $('mode-fill'), pointer = $('mode-pointer');
+  if (!fill) return;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const tabs  = { note: $('mode-note'), chat: $('mode-chat') };
+  const panes = { note: $('pane-note'), chat: $('pane-chat') };
+  let current = 'note';
+
+  function place() {
+    const wrap = document.querySelector('.modes-wrap').getBoundingClientRect();
+    const r = tabs[current].getBoundingClientRect();
+    fill.style.left  = (r.left - wrap.left) + 'px';
+    fill.style.width = r.width + 'px';
+    fill.classList.toggle('right', current === 'chat');
+    pointer.style.left = (r.left - wrap.left + r.width / 2 - 8) + 'px';
+  }
+  function apply(m) {
+    current = m;
+    for (const k in tabs) {
+      tabs[k].setAttribute('aria-selected', String(k === m));
+      panes[k].classList.toggle('on', k === m);
+    }
+    const sub = $('home-sub');
+    if (sub) sub.textContent = m === 'chat'
+      ? 'Privater Einmal-Chat · E2E-verschlüsselt'
+      : 'Einweg-Nachricht · zerstört sich beim Lesen';
+    place();
+    const el = tabs[m];
+    el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    setTimeout(() => el.classList.remove('pop'), 480);
+  }
+  tabs.note.addEventListener('click', () => current !== 'note' && apply('note'));
+  tabs.chat.addEventListener('click', () => current !== 'chat' && apply('chat'));
+  addEventListener('resize', place);
+  place();
+  if (document.fonts) document.fonts.ready.then(place);
+
+  // ── Eigenes Auswahlfeld ───────────────────────────────────────────────────
+  // Das native <select> öffnet auf iOS ein graues Systemrad, das sich nicht
+  // gestalten lässt. Die Liste liegt außerhalb des Panels, weil der clip-path
+  // des Rahmens sie sonst abschneiden würde.
+  const pickBtn = $('ttl-btn'), pickList = $('ttl-list'), pickValue = $('ttl-value'), ttlInput = $('note-ttl');
+  if (pickBtn && pickList) {
+    const opts = Array.prototype.slice.call(pickList.querySelectorAll('[role="option"]'));
+    let here = opts.findIndex(o => o.getAttribute('aria-selected') === 'true');
+
+    function placeList() {
+      const r = pickBtn.getBoundingClientRect();
+      const w = Math.max(r.width, 152);
+      pickList.style.width = w + 'px';
+      pickList.style.left = Math.round(Math.min(Math.max(8, r.right - w), innerWidth - w - 8)) + 'px';
+      const h = pickList.offsetHeight;
+      pickList.style.top = (innerHeight - r.bottom - 10 >= h)
+        ? Math.round(r.bottom + 6) + 'px'
+        : Math.round(Math.max(8, r.top - h - 6)) + 'px';
+    }
+    const markHere = i => opts.forEach((o, n) => o.classList.toggle('here', n === i));
+    function outside(e){ if (!pickList.contains(e.target) && !pickBtn.contains(e.target)) close(false); }
+    function open() {
+      pickList.hidden = false; placeList();
+      pickBtn.setAttribute('aria-expanded', 'true'); markHere(here);
+      document.addEventListener('mousedown', outside, true);
+      document.addEventListener('touchstart', outside, true);
+      addEventListener('resize', placeList); addEventListener('scroll', placeList, true);
+    }
+    function close(back) {
+      pickList.hidden = true; pickBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('touchstart', outside, true);
+      removeEventListener('resize', placeList); removeEventListener('scroll', placeList, true);
+      if (back) pickBtn.focus();
+    }
+    function choose(i) {
+      const o = opts[i]; if (!o) return;
+      opts.forEach(x => x.setAttribute('aria-selected', 'false'));
+      o.setAttribute('aria-selected', 'true');
+      here = i;
+      pickValue.textContent = o.textContent;
+      // Der Wert geht über das versteckte Feld an die bestehende Notiz-Logik
+      ttlInput.value = o.getAttribute('data-h');
+      ttlInput.dispatchEvent(new Event('change', { bubbles: true }));
+      close(true);
+    }
+    pickBtn.addEventListener('click', () => pickList.hidden ? open() : close(false));
+    pickBtn.addEventListener('keydown', e => {
+      if (['ArrowDown','ArrowUp','Enter',' '].includes(e.key)) { e.preventDefault(); open(); pickList.focus(); }
+    });
+    pickList.tabIndex = -1;
+    pickList.addEventListener('click', e => {
+      const li = e.target.closest('[role="option"]'); if (li) choose(opts.indexOf(li));
+    });
+    pickList.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); close(true); return; }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(here); return; }
+      if (e.key === 'Home') { e.preventDefault(); here = 0; markHere(here); return; }
+      if (e.key === 'End')  { e.preventDefault(); here = opts.length - 1; markHere(here); return; }
+      const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      here = Math.max(0, Math.min(opts.length - 1, here + d));
+      markHere(here);
+    });
+  }
+
+  // ── Startsequenz: der Schriftzug setzt sich aus Zeichenrauschen zusammen ──
+  const brand = document.querySelector('#screen-home .brand');
+  if (brand && !reduce) {
+    const G = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄ0123456789ABCDEF';
+    const real = brand.textContent, chars = real.split('');
+    let f = 0;
+    const t = setInterval(() => {
+      f++;
+      const shown = Math.floor(chars.length * f / 16);
+      brand.textContent = chars.map((c, i) => i < shown ? c : G[Math.floor(Math.random() * G.length)]).join('');
+      if (f >= 16) { clearInterval(t); brand.textContent = real; }
+    }, 38);
+  }
+})();

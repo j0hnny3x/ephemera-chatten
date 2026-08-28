@@ -17,6 +17,9 @@
   <meta name="twitter:title"       content="🔒 Privater verschlüsselter Chat">
   <meta name="twitter:description" content="Du wurdest zu einem sicheren Einmal-Chat eingeladen.">
   <title>ephemera — Privater Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Share+Tech+Mono&display=swap">
   <link rel="stylesheet" href="/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -26,136 +29,204 @@
 
   <!-- HOME -->
   <div id="screen-home" class="screen active">
-    <div class="logo-wrap">
-      <div class="logo-icon"></div>
-      <div>
-        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
-        <div class="sub" id="home-sub">Privater Einmal-Chat · E2E-verschlüsselt</div>
+
+    <header class="head">
+      <div class="mark"><span></span><span></span></div>
+      <div class="title">
+        <div class="brand glitch" data-text="EPHEMERA">EPHEMERA</div>
+        <div class="sub" id="home-sub">Einweg-Nachricht · zerstört sich beim Lesen</div>
+      </div>
+    </header>
+
+    <div class="modes-wrap">
+      <div class="hud modes-frame"><div class="hud-in">
+        <div class="modes" role="tablist" aria-label="Modus wählen">
+          <div class="fill" id="mode-fill"></div>
+          <button type="button" class="mode" id="mode-note" role="tab"
+            aria-selected="true" aria-controls="pane-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="m3 6 9 7 9-7"/></svg>
+            <span>Einmal-Nachricht</span>
+          </button>
+          <button type="button" class="mode" id="mode-chat" role="tab"
+            aria-selected="false" aria-controls="pane-chat">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4V5a2 2 0 0 1 2-2z"/></svg>
+            <span>Chat</span>
+          </button>
+        </div>
+      </div></div>
+      <div class="pointer" id="mode-pointer"></div>
+    </div>
+
+    <!-- ── Modus: Einmal-Nachricht ────────────────────────────────────── -->
+    <div id="pane-note" class="pane on" role="tabpanel" aria-labelledby="mode-note">
+      <div class="hud strip"><div class="hud-in">Einmal lesbar · Zerstört sich danach · Kein Account · Bis 14 Tage Frist</div></div>
+
+      <div class="hud panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
+
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 4h16v13H8l-4 3.5z"/><path d="M8 9h8M8 13h5"/></svg></span>
+              <span class="f-label">Deine Nachricht</span>
+            </div>
+            <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+              <textarea class="note-area" id="note-text" maxlength="10000"
+                placeholder="Tippe hier deine Nachricht …" aria-label="Deine Nachricht"></textarea>
+              <div class="count"><span id="note-count">0</span> / 10.000</div>
+            </div></div>
+          </div>
+
+          <div class="rule"></div>
+
+          <div class="opt-duo">
+            <span class="opt-name" id="ttl-label">Frist</span>
+            <input type="hidden" id="note-ttl" value="48">
+            <button type="button" class="pick-btn" id="ttl-btn"
+              aria-haspopup="listbox" aria-expanded="false" aria-labelledby="ttl-label ttl-btn">
+              <span id="ttl-value">2 Tagen</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <span class="opt-name opt-name-2">Löschen</span>
+            <label class="sw"><input type="checkbox" id="note-burn" checked aria-label="Nach dem Lesen löschen">
+              <span class="body"></span><span class="knob"></span></label>
+          </div>
+
+          <div class="rule"></div>
+
+          <details class="pw-fold">
+            <summary class="opt-row">
+              <span class="opt-name">Passwort <span class="f-opt">(optional)</span></span>
+              <svg class="fold-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div class="pw-row">
+              <input class="inp" id="note-pw" type="password" placeholder="Leer = kein Passwort"
+                autocomplete="new-password" spellcheck="false" maxlength="128">
+              <button id="note-pw-toggle" class="eye" type="button" aria-label="Passwort anzeigen">👁</button>
+            </div>
+            <div id="note-pw-bar"><div id="note-pw-fill"></div></div>
+          </details>
+
+          <p class="summary" id="note-summary"></p>
+
+          <button class="cta" id="btn-note-create" disabled>
+            <span class="cta-in">
+              <svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+                <circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/>
+                <circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/>
+                <circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/>
+                <path class="shackle" d="M23.2 27v-3.6a4.8 4.8 0 0 1 9.6 0V27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                <rect x="20.4" y="26.6" width="15.2" height="10.6" rx="1.7" fill="currentColor"/>
+                <circle cx="28" cy="31" r="1.5" fill="var(--acid)"/>
+              </svg>
+              <span class="cta-face">Sichere Nachricht erstellen</span>
+              <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
+            </span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <div class="mode-switch" role="tablist" aria-label="Modus wählen">
-      <button type="button" class="mode-btn active" id="mode-chat" role="tab"
-        aria-selected="true" aria-controls="pane-chat">Chat</button>
-      <button type="button" class="mode-btn" id="mode-note" role="tab"
-        aria-selected="false" aria-controls="pane-note">Einmal-Nachricht</button>
+    <!-- ── Modus: Chat ────────────────────────────────────────────────── -->
+    <div id="pane-chat" class="pane" role="tabpanel" aria-labelledby="mode-chat">
+      <div class="hud strip"><div class="hud-in">Kein Login · Keine Datenbank · E2E · Text · Bilder · Audio · Video · Max. 2 Teilnehmer · 2 Stunden</div></div>
+
+      <div class="hud panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
+
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0z"/></svg></span>
+              <span class="f-label">Dein Name <span class="f-opt">(optional)</span></span>
+            </div>
+            <div class="hud inbox"><div class="hud-in">
+              <input class="inp" id="sender-name" type="text" placeholder="z. B. Max Mustermann"
+                autocomplete="name" spellcheck="false" maxlength="30" aria-label="Dein Name">
+            </div></div>
+          </div>
+
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zm2 0h6V7a3 3 0 0 0-6 0z"/></svg></span>
+              <span class="f-label">Raumpasswort <span class="f-opt">(optional)</span></span>
+            </div>
+            <div class="hud inbox"><div class="hud-in">
+              <input class="inp" id="pw-input" type="password" placeholder="Leer = kein Passwort"
+                autocomplete="new-password" spellcheck="false" maxlength="128">
+              <button id="pw-toggle" class="eye" type="button" aria-label="Passwort anzeigen">👁</button>
+            </div></div>
+            <div id="pw-strength-bar"><div id="pw-strength-fill"></div></div>
+          </div>
+
+          <p class="assure">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+            Wird <b>niemals</b> an den Server übertragen.
+          </p>
+
+          <button class="cta" id="btn-create">
+            <span class="cta-in">
+              <svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+                <circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/>
+                <circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/>
+                <circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/>
+                <path class="shackle" d="M23.2 27v-3.6a4.8 4.8 0 0 1 9.6 0V27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                <rect x="20.4" y="26.6" width="15.2" height="10.6" rx="1.7" fill="currentColor"/>
+                <circle cx="28" cy="31" r="1.5" fill="var(--acid)"/>
+              </svg>
+              <span class="cta-face">Sicheren Chat erstellen</span>
+              <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
 
-    <!-- ── Modus: Chat ────────────────────────────────────────────────────── -->
-    <div id="pane-chat" class="home-pane active" role="tabpanel" aria-labelledby="mode-chat">
-      <div class="card">
-        <ul class="features">
-          <li>Kein Login · Keine Datenbank · Kein Account</li>
-          <li>AES-GCM-256 — Server sieht keinen Klartext</li>
-          <li>Text · Bilder · Audio · Video · Anrufe</li>
-          <li>Max. 2 Teilnehmer · 2 Stunden Laufzeit</li>
-        </ul>
-      </div>
-      <div class="card">
-        <div class="pw-label">Dein Name <span class="optional">(optional)</span></div>
-        <input id="sender-name" type="text" placeholder="z.B. Max Mustermann — erscheint in der Einladung"
-          autocomplete="name" spellcheck="false" maxlength="30" class="text-input">
-      </div>
-      <div class="card">
-        <div class="pw-label">Raumpasswort <span class="optional">(optional)</span></div>
-        <div class="pw-row">
-          <input id="pw-input" type="password" placeholder="Leer = kein Passwort"
-            autocomplete="new-password" spellcheck="false" maxlength="128">
-          <button id="pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
+    <!-- ── Sicherheitspult ────────────────────────────────────────────── -->
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head">
+          <span class="sec-title">Sicherheitslage</span>
+          <span class="fp">
+            <span class="fp-label">Schlüssel</span>
+            <span class="fp-cells" id="sec-fp"><span class="fp-cell">··</span><span class="fp-cell">··</span><span class="fp-cell">··</span><span class="fp-cell">··</span></span>
+          </span>
         </div>
-        <div id="pw-strength-bar"><div id="pw-strength-fill"></div></div>
-        <p class="pw-hint">Wird <strong>niemals</strong> an den Server übertragen.</p>
+        <div class="leds">
+          <span class="led" id="led-ctx"><i></i>Kontext<b>—</b></span>
+          <span class="led" id="led-crypto"><i></i>WebCrypto<b>—</b></span>
+          <span class="led" id="led-store"><i></i>Speicher<b>—</b></span>
+          <span class="led" id="led-key"><i></i>Chiffre<b>—</b></span>
+        </div>
+        <div class="log" id="sec-log" role="log" aria-live="polite"></div>
       </div>
-      <button id="btn-create" class="btn btn-primary">[ SICHEREN CHAT ERSTELLEN ]</button>
     </div>
 
-    <!-- ── Modus: Einmal-Nachricht ────────────────────────────────────────── -->
-    <div id="pane-note" class="home-pane" role="tabpanel" aria-labelledby="mode-note">
-
-      <div class="card note-compose-card">
-        <label class="pw-label" for="note-text">Deine Nachricht</label>
-        <textarea id="note-text" class="note-textarea" rows="7" maxlength="10000"
-          placeholder="Tippe hier deine Nachricht …" spellcheck="true"></textarea>
-        <div class="note-meter">
-          <span id="note-count">0</span><span class="note-meter-max"> / 10.000</span>
-        </div>
-      </div>
-
-      <div class="card note-options">
-        <div class="opt-row">
-          <label class="opt-label" for="note-ttl">Läuft ab nach</label>
-          <select id="note-ttl" class="opt-select">
-            <option value="2">2 Stunden</option>
-            <option value="12">12 Stunden</option>
-            <option value="24">24 Stunden</option>
-            <option value="48" selected>2 Tagen</option>
-            <option value="168">7 Tagen</option>
-            <option value="336">14 Tagen</option>
-          </select>
-        </div>
-
-        <div class="opt-divider"></div>
-
-        <label class="opt-row tswitch-wrap" for="note-burn">
-          <span class="opt-label">Nach dem Lesen löschen</span>
-          <input type="checkbox" id="note-burn" class="tswitch-input" checked>
-          <span class="tswitch" aria-hidden="true"><span class="tswitch-knob"></span></span>
-        </label>
-
-        <div class="opt-divider"></div>
-
-        <div class="opt-pw">
-          <label class="opt-label" for="note-pw">Passwort <span class="optional">(optional)</span></label>
-          <div class="pw-row">
-            <input id="note-pw" type="password" placeholder="Leer = kein Passwort"
-              autocomplete="new-password" spellcheck="false" maxlength="128">
-            <button id="note-pw-toggle" class="btn btn-ghost pw-eye" type="button" aria-label="Passwort anzeigen">👁</button>
-          </div>
-          <div id="note-pw-bar"><div id="note-pw-fill"></div></div>
-        </div>
-
-        <p class="note-summary" id="note-summary"></p>
-      </div>
-
-      <div class="note-cta">
-        <button id="btn-note-create" class="btn btn-primary" disabled>[ NACHRICHT ERSTELLEN ]</button>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Was mit deiner Nachricht passiert</div>
-        <ul class="features">
-          <li>Verschlüsselt wird im Browser — der Schlüssel steht hinter dem <code>#</code> im Link und erreicht den Server nie</li>
-          <li>Gespeichert wird nur der verschlüsselte Text, ohne Konto, ohne IP-Adresse</li>
-          <li>Beim ersten Öffnen wird sie gelöscht — endgültig, auch für dich</li>
-          <li>Ungeöffnet verschwindet sie, sobald die Frist abläuft</li>
-        </ul>
-      </div>
-
-      <ol class="steps">
-        <li>
-          <span class="step-n">1</span>
-          <div class="step-body">
-            <strong>Schreiben</strong>
-            <p>Nachricht eintippen, Frist wählen, auf <em>Nachricht erstellen</em> tippen.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-n">2</span>
-          <div class="step-body">
-            <strong>Link verschicken</strong>
-            <p>Den Link über WhatsApp, Telegram, Signal oder SMS weitergeben.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-n">3</span>
-          <div class="step-body">
-            <strong>Einmal lesen</strong>
-            <p>Der Empfänger öffnet den Link, liest — und die Nachricht zerstört sich.</p>
-          </div>
-        </li>
-      </ol>
-    </div>
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
   </div>
+
+  <ul class="pick-list" id="ttl-list" role="listbox" aria-labelledby="ttl-label" hidden>
+    <li role="option" data-h="2">2 Stunden</li>
+    <li role="option" data-h="12">12 Stunden</li>
+    <li role="option" data-h="24">24 Stunden</li>
+    <li role="option" data-h="48" aria-selected="true">2 Tagen</li>
+    <li role="option" data-h="168">7 Tagen</li>
+    <li role="option" data-h="336">14 Tagen</li>
+  </ul>
+
 
   <!-- LINK TEILEN -->
   <div id="screen-share" class="screen">
@@ -194,7 +265,7 @@
       <strong>So geht's:</strong><br>
       1. Auf <strong style="color:var(--matrix)">EINLADUNG KOPIEREN</strong> tippen<br>
       2. In WhatsApp / Signal / SMS einfügen und schicken<br>
-      3. Auf <strong style="color:var(--matrix)">[ CHAT ÖFFNEN ]</strong> tippen &amp; warten
+      3. Auf <strong style="color:var(--matrix)">Chat öffnen</strong> tippen &amp; warten
     </div>
     <div style="display:flex;gap:.5rem">
       <button id="btn-share-qr"  class="btn btn-ghost"   style="flex:1">QR-CODE</button>
@@ -220,7 +291,7 @@
         <button id="pw-join-toggle" class="btn btn-ghost pw-eye" type="button">👁</button>
       </div>
       <div id="pw-error" style="display:none;color:var(--danger);font-size:.8rem;margin-top:.5rem">Falsches Passwort.</div>
-      <button id="btn-pw-join" class="btn btn-primary" style="margin-top:1rem;width:100%">[ BEITRETEN ]</button>
+      <button id="btn-pw-join" class="btn btn-primary" style="margin-top:1rem;width:100%">Beitreten</button>
     </div>
   </div>
 
@@ -412,6 +483,10 @@
             <span class="tray-label">Sprache</span>
           </div>
           <div class="tray-icon-item">
+            <button id="btn-video-rec"  class="tray-btn" title="Videonachricht aufnehmen">🎬</button>
+            <span class="tray-label">Clip</span>
+          </div>
+          <div class="tray-icon-item">
             <button id="btn-sd-toggle"  class="tray-btn" title="Selbstlöschend">⏱</button>
             <span class="tray-label">Timer</span>
           </div>
@@ -518,7 +593,7 @@
       <h1>VERBINDUNG<br>GETRENNT</h1>
       <p id="closed-reason">Dieser Raum wurde gelöscht.</p>
       <br>
-      <button id="btn-new" class="btn btn-primary" style="width:100%">[ NEUEN CHAT ERSTELLEN ]</button>
+      <button id="btn-new" class="btn btn-primary" style="width:100%">Neuen Chat erstellen</button>
     </div>
   </div>
 
@@ -538,7 +613,8 @@
 <div id="drop-overlay"></div>
 <!-- Verstecktes Audio für Klingelton -->
 <audio id="ringtone" loop style="display:none"></audio>
-<audio id="remote-audio" autoplay style="display:none"></audio>
+<video id="remote-audio" autoplay playsinline webkit-playsinline
+  style="position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px"></video>
 
 <script src="/client.js"></script>
 </body>

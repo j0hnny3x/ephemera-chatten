@@ -1869,15 +1869,10 @@ function showNoteGone(reason) {
   noteShowState('gone');
   if (reason) $('note-gone-reason').textContent = reason;
   showScreen('noteRead');
+  const titel = document.querySelector('#note-gone .gone-title');
+  if (titel) revealDecoded(titel, 'Nichts mehr da', 'Nichts mehr da');
 }
 
-function fillCipherPreview() {
-  const el = $('cipher-preview');
-  if (!el) return;
-  let out = '';
-  for (let i = 0; i < 420; i++) out += NOTE_GLYPHS[Math.floor(Math.random() * NOTE_GLYPHS.length)];
-  el.textContent = out;
-}
 
 // Signature: der Text loest sich aus dem Rauschen heraus — zeigt, was
 // technisch gerade passiert, statt es nur zu behaupten.
@@ -1924,24 +1919,34 @@ async function openNote() {
     return;
   }
 
-  const label = btn.textContent;
+  // Beschriftung in .cta-face — btn.textContent wuerde Schloss und Pfeil
+  // aus dem Knopf loeschen.
+  const face = btn.querySelector('.cta-face');
+  const label = face ? face.textContent : btn.textContent;
+  const setze = t => { if (face) face.textContent = t; else btn.textContent = t; };
+  const ruhig = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const halt  = ruhig ? 0 : 340;
+
   btn.disabled = true;
-  btn.textContent = '[ ENTSCHLÜSSELE … ]';
+  btn.classList.add('busy');   // der Buegel faehrt hoch, das Schloss geht auf
+  setze('Wird geholt');
   try {
     const body = {};
     if (noteData.hasPassword) body.pwHash = await hashPassword($('note-read-pw').value);
 
-    const res = await fetch('/api/note/' + noteData.id + '/open', {
+    const res = await mitMindestdauer(fetch('/api/note/' + noteData.id + '/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }), halt);
 
     if (res.status === 401) { noteReadError('Falsches Passwort.'); $('note-read-pw').select(); return; }
     if (res.status === 404) { showNoteGone(); return; }
     if (!res.ok)            { noteReadError('Der Server antwortet nicht. Versuch es gleich noch einmal.'); return; }
 
     const data = await res.json();
+    setze('Wird entschlüsselt');
+    if (!ruhig) await new Promise(r => setTimeout(r, halt));
     let plain;
     try {
       plain = await noteDecrypt(data.payload, noteData.key);
@@ -1962,8 +1967,9 @@ async function openNote() {
   } catch {
     noteReadError('Keine Verbindung zum Server.');
   } finally {
+    btn.classList.remove('busy');
+    setze(label);
     btn.disabled = false;
-    btn.textContent = label;
   }
 }
 
@@ -1973,7 +1979,6 @@ async function initNoteFromFragment() {
 
   showScreen('noteRead');
   noteShowState('sealed');
-  fillCipherPreview();
 
   const frag = location.hash.slice(1);
   if (!frag) { showNoteGone('Der Link ist unvollständig — der Schlüssel hinter dem # fehlt.'); return true; }

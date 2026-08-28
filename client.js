@@ -1808,25 +1808,55 @@ function noteShareText(link) {
 
 function showNoteDone(link, data) {
   noteData.link = link;
-  $('note-link-box').textContent = link;
+
+  // Den Schluessel im Link sichtbar machen. Alles hinter der Raute ist der
+  // Schluessel — er geht nie an den Server. Als Satz steht das schnell da und
+  // wird ueberlesen; abgesetzt sieht man es.
+  const box = $('note-link-box');
+  const r = link.indexOf('#');
+  box.textContent = '';
+  if (r < 0) {
+    box.textContent = link;
+  } else {
+    const basis = document.createElement('span');
+    basis.className = 'lk-base';
+    basis.textContent = link.slice(0, r + 1);
+    const schluessel = document.createElement('span');
+    schluessel.className = 'lk-key';
+    schluessel.textContent = link.slice(r + 1);
+    box.appendChild(basis);
+    box.appendChild(schluessel);
+  }
 
   const share = encodeURIComponent(noteShareText(link));
   $('share-wa').href = 'https://wa.me/?text=' + share;
   $('share-tg').href = 'https://t.me/share/url?url=' + encodeURIComponent(link)
                      + '&text=' + encodeURIComponent('Verschlüsselte Nachricht — nur einmal zu öffnen');
 
+  // Streifen-Schreibweise wie auf der Startseite, mit Mittelpunkten getrennt
   $('note-done-info').textContent = data.burn
-    ? 'Zerstört sich beim ersten Öffnen. Ungelesen verschwindet sie ' + noteFmtRemaining(data.expiresAt) + '.'
-    : 'Lesbar bis ' + noteFmtWhen(data.expiresAt) + '.';
+    ? 'Einmal lesbar · Zerstört sich beim Öffnen · Ungelesen weg ' + noteFmtRemaining(data.expiresAt)
+    : 'Mehrfach lesbar · Läuft ab ' + noteFmtWhen(data.expiresAt);
 
-  $('btn-note-copy').textContent = 'Link kopieren';
+  noteCopyFace('Link kopieren', false);
   showScreen('noteDone');
 
   // Direkt in die Zwischenablage — der haeufigste naechste Schritt
-  navigator.clipboard?.writeText(link).then(() => {
-    $('btn-note-copy').textContent = '✓ Link kopiert';
-  }).catch(() => {});
+  navigator.clipboard && navigator.clipboard.writeText(link)
+    .then(() => noteCopyFace('Link kopiert', true))
+    .catch(() => {});
 }
+
+// Beschriftung des Kopier-Knopfs. Nicht textContent des Knopfes schreiben —
+// das loescht Schloss, Beschriftung und Pfeil.
+function noteCopyFace(text, fertig) {
+  const btn = $('btn-note-copy');
+  if (!btn) return;
+  const face = btn.querySelector('.cta-face');
+  if (face) face.textContent = text; else btn.textContent = text;
+  btn.classList.toggle('done', !!fertig);
+}
+
 
 // ── Lesen ────────────────────────────────────────────────────────────────────
 function noteShowState(which) {
@@ -2021,8 +2051,8 @@ function initNoteUI() {
     if (!noteData.link) return;
     try {
       await navigator.clipboard.writeText(noteData.link);
-      $('btn-note-copy').textContent = '✓ Link kopiert';
-      setTimeout(() => { $('btn-note-copy').textContent = 'Link kopieren'; }, 2500);
+      noteCopyFace('Link kopiert', true);
+      setTimeout(() => noteCopyFace('Link kopieren', false), 2500);
     } catch {
       const r = document.createRange();
       r.selectNodeContents($('note-link-box'));

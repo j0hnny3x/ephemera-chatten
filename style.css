@@ -2542,3 +2542,40 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
     display:flex;align-items:center;justify-content:center;
   }
 }
+
+/* ── Handy: Sprung beim Moduswechsel ─────────────────────────────────────────
+   Im Chat-Modus war die Konsole 8px schmaler, weil dort eine Bildlaufleiste
+   erschien. Dadurch passte die Kopfzeile "Sicherheitslage + Schluessel" nicht
+   mehr in eine Zeile (347px vorhanden, 339px noetig), brach um und wurde 23px
+   hoeher — was den Ueberlauf weiter verstaerkte. Eine Rueckkopplung mit 2px
+   Spielraum. Die Kopfzeile bricht jetzt gar nicht mehr um; der Titel weicht
+   notfalls ueber Kuerzung aus statt ueber eine zweite Zeile. */
+@media (max-width: 899px) {
+  .sec-head{flex-wrap:nowrap}
+  .sec-title{
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    letter-spacing:.09em;
+  }
+  .fp{flex:0 0 auto}
+
+  /* Der Kachelinhalt sass mittig. Weil die Chat-Kachel weniger hoch ist als
+     die Nachrichten-Kachel, rutschte ihr Streifen dadurch um 66px nach unten.
+     Beide beginnen jetzt oben; die Nachrichten-Kachel streckt sich ohnehin
+     ueber das Textfeld und fuellt den Platz. */
+  .pane.on{justify-content:flex-start}
+
+  /* Beide Kacheln bleiben im Raster, damit die Zeile nicht mit dem Inhalt
+     schwankt — wie auf dem Desktop. */
+  #screen-home .pane{
+    display:flex;grid-area:main;
+    visibility:hidden;pointer-events:none;
+  }
+  #screen-home .pane.on{visibility:visible;pointer-events:auto}
+}
+/* Ohne Zentrierung klafft im Chat-Modus eine Luecke zwischen Knopf und
+   Konsole. Statt den Inhalt zu verschieben, waechst der Rahmen mit — die
+   Leere sitzt dann innerhalb der Kachel und die Aufteilung bleibt in beiden
+   Modi dieselbe. */
+@media (max-width: 899px) {
+  #pane-chat.on .panel{flex:1 1 auto}
+}

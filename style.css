@@ -2515,3 +2515,30 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
    Schluessel wurden dadurch zu zwei Flex-Elementen nebeneinander statt zu
    fortlaufendem Text. Hier fliesst der Link wieder normal um. */
 #note-link-box,#invite-link-short{display:block}
+
+/* Beim Umschalten zwischen Einmal-Nachricht und Chat sprang auf dem Desktop
+   die ganze Seite: die Chat-Kachel ist 15px hoeher, und weil das Raster mittig
+   ausgerichtet ist, zentrierte es sich neu — Kopf 7px hoch, Fussleiste 7px
+   runter. Jetzt bleiben beide Kacheln im Raster und teilen sich dieselbe
+   Zelle; die Zeile bemisst sich damit immer nach der hoeheren. Die inaktive
+   wird ueber visibility ausgeblendet, nicht ueber display — dadurch belegt
+   sie weiter Platz, ist aber unsichtbar, nicht anklickbar und faellt aus der
+   Vorlesereihenfolge. */
+@media (min-width: 900px) {
+  #screen-home .pane{
+    display:flex;grid-area:main;
+    visibility:hidden;pointer-events:none;
+  }
+  #screen-home .pane.on{visibility:visible;pointer-events:auto}
+}
+
+/* Der Chat-Streifen zaehlt mehr auf und bricht auf zwei Zeilen um, der
+   Nachrichten-Streifen bleibt einzeilig — 26px gegen 44px. Dadurch sass die
+   Kachel darunter beim Umschalten 18px tiefer. Beide reservieren jetzt zwei
+   Zeilen; die einzeilige Fassung steht mittig darin. */
+@media (min-width: 900px) {
+  #screen-home .pane > .hud.strip > .hud-in{
+    min-height:3.72em;
+    display:flex;align-items:center;justify-content:center;
+  }
+}

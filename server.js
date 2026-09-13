@@ -15,16 +15,13 @@ const wss    = new WebSocketServer({ server, maxPayload: 64 * 1024 * 1024 });
 const rooms = new Map();
 
 const ROOM_LIFETIME = 2 * 60 * 60 * 1000;
-// Ein Anruf-Raum ist zum sofortigen Gebrauch gedacht und lebt deshalb kurz.
-const CALL_LIFETIME = 30 * 60 * 1000;
 const MAX_CLIENTS   = 2;
 const MAX_MSG_LEN   = 32 * 1024 * 1024;
 const MAX_PENDING   = 100;
 const PING_INTERVAL = 25 * 1000;
 
-function createRoom(id, pwHash, nurAnruf) {
-  const dauer = nurAnruf ? CALL_LIFETIME : ROOM_LIFETIME;
-  const hardTimer = setTimeout(() => deleteRoom(id, 'inactivity'), dauer);
+function createRoom(id, pwHash) {
+  const hardTimer = setTimeout(() => deleteRoom(id, 'inactivity'), ROOM_LIFETIME);
   rooms.set(id, {
     clients:        new Map(),   // token → ws (statt Set)
     hardTimer,
@@ -33,11 +30,6 @@ function createRoom(id, pwHash, nurAnruf) {
     pending:        [],
     sealed:         false,
     extensionCount: 0,
-    // Einmal-Anruf: verbraucht sich, sobald das Gespraech wirklich beginnt.
-    // Den Link nur zu oeffnen zaehlt nicht.
-    nurAnruf:       !!nurAnruf,
-    verbraucht:     false,
-    laeuftAb:       Date.now() + dauer,
   });
 }
 
@@ -100,28 +92,10 @@ app.post('/api/room', (req, res) => {
   res.json({ roomId: id, hasPassword: !!pwHash });
 });
 
-app.post('/api/call', (req, res) => {
-  const id     = crypto.randomBytes(16).toString('hex');
-  const pwHash = (typeof req.body?.pwHash === 'string' && req.body.pwHash.length === 64)
-    ? req.body.pwHash : null;
-  createRoom(id, pwHash, true);
-  const room = rooms.get(id);
-  console.log(`[call] ${id.slice(0, 8)}… angelegt (30min, pw=${!!pwHash})`);
-  res.json({ callId: id, hasPassword: !!pwHash, expiresAt: room.laeuftAb });
-});
-
 app.get('/api/room/:id', (req, res) => {
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'not_found' });
-  res.json({
-    createdAt:   room.createdAt,
-    hasPassword: !!room.pwHash,
-    sealed:      room.sealed,
-    clientCount: room.clients.size,
-    nurAnruf:    !!room.nurAnruf,
-    verbraucht:  !!room.verbraucht,
-    laeuftAb:    room.laeuftAb || null,
-  });
+  res.json({ createdAt: room.createdAt, hasPassword: !!room.pwHash, sealed: room.sealed, clientCount: room.clients.size });
 });
 
 // Health-Check für Uptime-Monitoring (z.B. UptimeRobot) — hält Server wach
@@ -149,10 +123,6 @@ app.get('/r/:id', (req, res) => {
   res.sendFile(INDEX_HTML);
 });
 
-app.get('/a/:id', (req, res) => {
-  res.sendFile(INDEX_HTML);
-});
-
 app.get('/og-image.png', (req, res) => {
   const svgPath = path.join(__dirname, 'og-image.svg');
   if (fs.existsSync(svgPath)) { res.setHeader('Content-Type', 'image/svg+xml'); res.sendFile(svgPath); }
@@ -171,11 +141,6 @@ wss.on('connection', (ws, req) => {
 
   const room = rooms.get(roomId);
   if (!room) { ws.close(4001, 'room_not_found'); return; }
-  // Ein gefuehrtes Gespraech laesst sich nicht wiederholen. Wer den Link
-  // danach oeffnet, kommt nicht mehr hinein.
-  if (room.nurAnruf && room.verbraucht && !room.clients.has(token)) {
-    ws.close(4004, 'call_used'); return;
-  }
 
   // ── Session-Token: Reconnect des gleichen Clients erkennen ─────────────────
   const existingWs = room.clients.get(token);
@@ -260,25 +225,11 @@ wss.on('connection', (ws, req) => {
       else { if (room.pending.length < MAX_PENDING) room.pending.push(fwd); ws.send(JSON.stringify({ type: 'buffered', id: msg.id })); }
 
     } else if (rtcTypes.includes(msg.type)) {
-      // Der Anruf-Link gilt ab dem Moment als verbraucht, in dem das
-      // Gespraech tatsaechlich zustande kommt — die Antwort auf das
-      // Angebot ist dafuer der verlaessliche Zeitpunkt.
-      if (room.nurAnruf && msg.type === 'webrtc_answer' && !room.verbraucht) {
-        room.verbraucht = true;
-        console.log(`[call] ${roomId.slice(0, 8)}… Gespraech begonnen, Link verbraucht`);
-      }
-
       // WebRTC Signaling blind weiterleiten
       const fwd = { type: msg.type };
       if (msg.sdp)       fwd.sdp       = msg.sdp;
       if (msg.candidate) fwd.candidate = msg.candidate;
       broadcastExcept(room, ws, fwd);
-
-      // Nach dem Auflegen ist der Anruf-Raum erledigt. Kurz warten, damit
-      // beide Seiten das Auflegen noch mitbekommen.
-      if (room.nurAnruf && msg.type === 'webrtc_hangup') {
-        setTimeout(() => deleteRoom(roomId, 'call_ended'), 1500);
-      }
 
     } else if (msg.type === 'read') {
       const readAt = new Date(ts).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });

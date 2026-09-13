@@ -908,12 +908,7 @@ async function createPeerConnection(){
   pc.onconnectionstatechange = () => {
     console.log('[WebRTC]', pc.connectionState);
     if(pc.connectionState === 'connected'){
-      // Im Einmal-Anruf laeuft auch das Sprachgespraech im Vollbild-Overlay.
-      // Ohne diese Weiche bliebe dort 'Verbinde ...' stehen und die Dauer
-      // liefe unsichtbar in der Chatleiste mit.
-      const imOverlay = isVideoCall ||
-        (typeof anruf !== 'undefined' && anruf.id && anruf.aktiv);
-      if(imOverlay){
+      if(isVideoCall){
         $('video-call-text').textContent = 'Verbunden';
         $('video-call-dot').classList.add('active');
         startVideoCallTimer();
@@ -1062,12 +1057,6 @@ function hangup(){
 }
 
 function cleanupCall(){
-  // Im Einmal-Anruf ist mit dem Auflegen alles vorbei — der Link ist weg.
-  if (typeof anruf !== 'undefined' && anruf.aktiv) {
-    const gelaufen = callSeconds;
-    anruf.aktiv = false;
-    setTimeout(() => anrufVorbei(gelaufen), 60);
-  }
   clearInterval(callTimer); callSeconds=0;
   clearTimeout(window._callTimeout);
   cancelCallReconnect();
@@ -1444,15 +1433,6 @@ function openWebSocket(){
         if(partnerConnected&&!was){
           setStatus('connected','VERBUNDEN · E2E-VERSCHLÜSSELT');
           setPartnerBanner('online');addSystem('Partner ist online.');
-          // Einmal-Anruf: jetzt ist der andere wirklich da — der Anrufer
-          // legt los. Frueher haette startCall an seiner eigenen Pruefung
-          // auf partnerConnected abgebrochen.
-          if (typeof anruf !== 'undefined' && anruf.istAnrufer && anruf.id && !anruf.aktiv) {
-            anruf.aktiv = true;
-            isVideoCall = anruf.video;
-            anrufOverlay();
-            setTimeout(() => startCall(anruf.video), 80);
-          }
           for(const[id] of myMsgs)markDelivered(id);hasShownNewMsgDivider=false;
         }else if(!partnerConnected&&was){
           setStatus('waiting','PARTNER OFFLINE');setPartnerBanner('offline');
@@ -1494,12 +1474,6 @@ function openWebSocket(){
       // ── WebRTC Signaling ──────────────────────────────────────────────────
       case 'webrtc_call':
         isVideoCall = !!msg.withVideo;
-        // Im Einmal-Anruf hat der Empfaenger schon auf dem eigenen
-        // Bildschirm angenommen — hier nicht noch einmal fragen.
-        if (typeof anruf !== 'undefined' && anruf.autoAnnehmen) {
-          anruf.autoAnnehmen = false; anruf.aktiv = true;
-          anrufOverlay(); answerCall(); break;
-        }
         $('call-incoming').style.display='block';
         $('incoming-type-text').textContent = isVideoCall ? '📹 Eingehender Videoanruf…' : '📞 Eingehender Anruf…';
         playRingtone();vibrate([200,100,200,100,200]);
@@ -1547,18 +1521,7 @@ function openWebSocket(){
       case 'webrtc_hangup':
         cleanupCall();addSystem('📵 Gesprächspartner hat aufgelegt.');break;
 
-      case 'room_closed':
-        intentionalClose=true;
-        // Ein Anruf-Raum wird nach dem Auflegen absichtlich geloescht. Dann
-        // steht der eigene Schlussbildschirm schon — screen-closed waere
-        // eine Fehlermeldung fuer den Normalfall.
-        if (typeof anruf !== 'undefined' && anruf.id) {
-          if (screens.callDone && screens.callDone.classList.contains('active'))
-            anrufAbbruch('Abgelaufen', 'Der Anruf-Link ist abgelaufen, ohne dass jemand angenommen hat.');
-          break;
-        }
-        showClosed(closedReason(msg.reason));
-        break;
+      case 'room_closed':intentionalClose=true;showClosed(closedReason(msg.reason));break;
       case 'error':
         if(msg.code==='not_authenticated'){intentionalClose=true;showClosed('Authentifizierung fehlgeschlagen.');}
         else if(msg.code==='max_extensions')addSystem('[Max. 3 Verlängerungen erreicht]');
@@ -1632,10 +1595,7 @@ function closedReason(code){
   initNoteUI();
   if(!h){
     const n = await initNoteFromFragment();
-    if(!n) {
-      const a = await initAnrufAusPfad();
-      if(!a) showScreen('home');
-    }
+    if(!n) showScreen('home');
   }
 })();
 
@@ -2267,13 +2227,8 @@ function initNoteUI() {
   const fill = $('mode-fill'), pointer = $('mode-pointer');
   if (!fill) return;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const tabs  = { note: $('mode-note'), chat: $('mode-chat'), call: $('mode-call') };
-  const panes = { note: $('pane-note'), chat: $('pane-chat'), call: $('pane-call') };
-  const unterzeilen = {
-    note: 'Einweg-Nachricht \u00b7 zerst\u00f6rt sich beim Lesen',
-    chat: 'Privater Einmal-Chat \u00b7 E2E-verschl\u00fcsselt',
-    call: 'Einmal-Anruf \u00b7 Peer-to-Peer',
-  };
+  const tabs  = { note: $('mode-note'), chat: $('mode-chat') };
+  const panes = { note: $('pane-note'), chat: $('pane-chat') };
   let current = 'note';
 
   function place() {
@@ -2281,8 +2236,7 @@ function initNoteUI() {
     const r = tabs[current].getBoundingClientRect();
     fill.style.left  = (r.left - wrap.left) + 'px';
     fill.style.width = r.width + 'px';
-    // Nur der letzte Reiter bekommt die Kerbe rechts unten.
-    fill.classList.toggle('right', current === 'call');
+    fill.classList.toggle('right', current === 'chat');
     pointer.style.left = (r.left - wrap.left + r.width / 2 - 8) + 'px';
   }
   function apply(m) {
@@ -2292,13 +2246,16 @@ function initNoteUI() {
       panes[k].classList.toggle('on', k === m);
     }
     const sub = $('home-sub');
-    if (sub) sub.textContent = unterzeilen[m] || unterzeilen.note;
+    if (sub) sub.textContent = m === 'chat'
+      ? 'Privater Einmal-Chat · E2E-verschlüsselt'
+      : 'Einweg-Nachricht · zerstört sich beim Lesen';
     place();
     const el = tabs[m];
     el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
     setTimeout(() => el.classList.remove('pop'), 480);
   }
-  for (const k in tabs) tabs[k].addEventListener('click', () => current !== k && apply(k));
+  tabs.note.addEventListener('click', () => current !== 'note' && apply('note'));
+  tabs.chat.addEventListener('click', () => current !== 'chat' && apply('chat'));
   addEventListener('resize', place);
   place();
   if (document.fonts) document.fonts.ready.then(place);
@@ -2384,255 +2341,3 @@ function initNoteUI() {
     }, 38);
   }
 })();
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ── EINMAL-ANRUF ────────────────────────────────────────────────────────
-// Ein Anruf-Raum ist derselbe Raum wie beim Chat, nur kurzlebig und nach dem
-// Gespraech tot. Dadurch erbt der Anruf die vorhandene Maschinerie: Beitritt,
-// Versiegelung bei zwei Teilnehmern, Signalisierung, Auflegen, Aufraeumen.
-// ═════════════════════════════════════════════════════════════════════════════
-
-screens.callDone = $('screen-call-done');
-screens.callIn   = $('screen-call-in');
-screens.callOver = $('screen-call-over');
-
-let anruf = { id:null, key:null, link:null, video:true,
-             istAnrufer:false, autoAnnehmen:false, aktiv:false };
-
-// Der Name des Anrufers steht im Anker hinter der Raute, hinter einer Tilde.
-// Alles hinter dem # sendet der Browser nie mit — der Server erfaehrt den
-// Namen also nicht, wer den Link hat aber schon.
-function anrufNameKodieren(name) {
-  const n = (name || "").trim();
-  if (!n) return "";
-  let roh = "";
-  new TextEncoder().encode(n).forEach(b => { roh += String.fromCharCode(b); });
-  return "~" + btoa(roh).split("+").join("-").split("/").join("_").split("=").join("");
-}
-
-function anrufNameLesen(teil) {
-  if (!teil) return "";
-  try {
-    const b64 = teil.split("-").join("+").split("_").join("/");
-    const roh = atob(b64 + "===".slice((b64.length + 3) % 4));
-    return new TextDecoder().decode(Uint8Array.from(roh, c => c.charCodeAt(0))).slice(0, 40);
-  } catch { return ""; }
-}
-
-// Sprachanruf im Vollbild: dasselbe Overlay wie beim Video, nur ohne Bild.
-function anrufOverlay() {
-  const ov = $('video-call-overlay');
-  if (!ov) return;
-  ov.classList.toggle('nur-ton', !isVideoCall);
-  showVideoCallOverlay('Verbinde …');
-}
-
-async function anrufErstellen() {
-  const btn  = $('btn-call-create');
-  const face = btn.querySelector('.cta-face');
-  const beschriftung = face.textContent;
-  const ruhig = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const halt  = ruhig ? 0 : 380;
-  const stufe = t => { face.textContent = t; };
-
-  btn.disabled = true;
-  btn.classList.remove('done', 'fehler');
-  btn.classList.add('busy');
-
-  try {
-    stufe('Schlüssel wird erzeugt');
-    const { key, b64url } = await mitMindestdauer(generateKey(), halt);
-    window.secShowKey && secShowKey(b64url);
-
-    stufe('Leitung wird geöffnet');
-    const res = await mitMindestdauer(fetch('/api/call', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    }), halt);
-    if (!res.ok) throw new Error('Die Leitung konnte nicht geöffnet werden.');
-    const data = await res.json();
-
-    btn.classList.remove('busy');
-    btn.classList.add('done');
-    stufe('Bereit');
-    window.secLog && window.secLog('Anruf-Leitung offen', String(data.callId).slice(0, 8) + '…');
-    if (!ruhig) await new Promise(r => setTimeout(r, 520));
-
-    const link = location.origin + '/a/' + data.callId + '#' + b64url
-               + anrufNameKodieren($('call-name').value);
-    anruf.id = data.callId;
-    anruf.key = key;
-    anruf.link = link;
-    anruf.video = $('call-video').checked;
-    anruf.istAnrufer = true;
-    anruf.aktiv = false;
-
-    anrufLinkZeigen(link, data);
-
-    // Der Anrufer geht selbst in den Raum, damit er mitbekommt, wenn der
-    // andere annimmt — dann startet das Gespraech von allein.
-    roomId = data.callId;
-    cryptoKey = key;
-    intentionalClose = false;
-    openWebSocket();
-  } catch (e) {
-    const grund = (e && e.message) || 'Der Anruf konnte nicht erstellt werden.';
-    window.secLog && window.secLog('Fehlgeschlagen', grund);
-    btn.classList.remove('busy', 'done');
-    btn.classList.add('fehler');
-    stufe('Fehlgeschlagen');
-    await new Promise(r => setTimeout(r, 2400));
-  } finally {
-    btn.classList.remove('busy', 'done', 'fehler');
-    face.textContent = beschriftung;
-    btn.disabled = false;
-  }
-}
-
-function anrufLinkZeigen(link, data) {
-  linkMitSchluessel($('call-link-box'), link);
-
-  const text = 'Ich rufe dich gleich verschlüsselt an. Der Link gilt nur für dieses eine Gespräch:\n' + link;
-  const geteilt = encodeURIComponent(text);
-  $('call-share-wa').href = 'https://wa.me/?text=' + geteilt;
-  $('call-share-tg').href = 'https://t.me/share/url?url=' + encodeURIComponent(link)
-                          + '&text=' + encodeURIComponent('Verschlüsselter Anruf — nur einmal');
-
-  const min = data && data.expiresAt
-    ? Math.max(1, Math.round((data.expiresAt - Date.now()) / 60000)) : 30;
-  $('call-done-info').textContent = 'Gültig ' + min + ' Minuten · Stirbt beim ersten Gespräch';
-
-  ctaFace($('btn-call-copy'), 'Link kopieren', false);
-  showScreen('callDone');
-
-  navigator.clipboard && navigator.clipboard.writeText(link)
-    .then(() => ctaFace($('btn-call-copy'), 'Link kopiert', true))
-    .catch(() => {});
-}
-
-async function initAnrufAusPfad() {
-  const treffer = location.pathname.match(/^\/a\/([a-f0-9]{32})$/);
-  if (!treffer) return false;
-
-  showScreen('callIn');
-  const frag = location.hash.slice(1);
-  const teile = frag.split('~');
-  const b64key = teile[0];
-  const name   = anrufNameLesen(teile[1]);
-
-  if (!b64key) {
-    anrufAbbruch('Link unvollständig', 'Der Schlüssel hinter dem # fehlt.');
-    return true;
-  }
-  anruf.id = treffer[1];
-  try { anruf.key = await importKey(b64key); }
-  catch { anrufAbbruch('Schlüssel ungültig', 'Der Schlüssel in diesem Link passt nicht.'); return true; }
-
-  if (name) $('call-in-title').textContent = name + ' ruft dich an';
-
-  try {
-    const r = await fetch('/api/room/' + anruf.id);
-    if (!r.ok) {
-      anrufAbbruch('Nicht mehr da', 'Dieser Anruf-Link ist abgelaufen oder wurde bereits benutzt.');
-      return true;
-    }
-    const d = await r.json();
-    if (d.verbraucht) {
-      anrufAbbruch('Schon geführt', 'Dieses Gespräch wurde bereits geführt. Der Link ist verbraucht.');
-      return true;
-    }
-  } catch {
-    anrufAbbruch('Keine Verbindung', 'Der Server antwortet nicht.');
-  }
-  return true;
-}
-
-async function anrufAnnehmen() {
-  if (!anruf.id || !anruf.key) return;
-  const btn  = $('btn-call-accept');
-  const face = btn.querySelector('.cta-face');
-  btn.disabled = true;
-  btn.classList.add('busy');
-  face.textContent = 'Verbinde …';
-  $('call-in-error').hidden = true;
-
-  // Ab jetzt darf der eingehende Anruf ohne weitere Rueckfrage durchgehen.
-  anruf.autoAnnehmen = true;
-  anruf.istAnrufer = false;
-  isVideoCall = false;
-
-  roomId = anruf.id;
-  cryptoKey = anruf.key;
-  intentionalClose = false;
-  openWebSocket();
-
-  // Meldet sich in zwanzig Sekunden niemand, war der Anrufer nicht da.
-  clearTimeout(window.__anrufWartet);
-  window.__anrufWartet = setTimeout(() => {
-    if (!anruf.aktiv) {
-      btn.classList.remove('busy');
-      face.textContent = 'Anruf annehmen';
-      btn.disabled = false;
-      const f = $('call-in-error');
-      f.textContent = 'Der Anrufer ist gerade nicht da. Sag ihm Bescheid und versuch es noch einmal.';
-      f.hidden = false;
-    }
-  }, 20000);
-}
-
-// Der Link taugt nicht mehr — Grund nennen, Schlussbildschirm zeigen.
-function anrufAbbruch(titel, text) {
-  $('call-over-title').textContent = titel;
-  $('call-over-info').textContent = text;
-  showScreen('callOver');
-}
-
-function anrufVorbei(sekunden) {
-  clearTimeout(window.__anrufWartet);
-  const m = Math.floor((sekunden || 0) / 60), sek = (sekunden || 0) % 60;
-  const dauer = sekunden > 0
-    ? m + ' Minuten ' + sek + ' Sekunden. ' : '';
-  $('call-over-title').textContent = 'Gespräch beendet';
-  $('call-over-info').textContent = dauer + 'Der Link ist verbraucht und lässt sich kein zweites Mal öffnen.';
-  intentionalClose = true;
-  try { ws && ws.close(); } catch {}
-  showScreen('callOver');
-}
-
-function initAnrufUI() {
-  $('btn-call-create')?.addEventListener('click', anrufErstellen);
-  $('btn-call-accept')?.addEventListener('click', anrufAnnehmen);
-
-  $('btn-call-reject')?.addEventListener('click', () => {
-    anruf.autoAnnehmen = false;
-    anrufAbbruch('Abgelehnt', 'Du hast den Anruf abgelehnt. Der Link bleibt gültig, bis er abläuft.');
-  });
-
-  $('btn-call-copy')?.addEventListener('click', async () => {
-    if (!anruf.link) return;
-    try {
-      await navigator.clipboard.writeText(anruf.link);
-      ctaFace($('btn-call-copy'), 'Link kopiert', true);
-      setTimeout(() => ctaFace($('btn-call-copy'), 'Link kopieren', false), 2500);
-    } catch {
-      const r = document.createRange();
-      r.selectNodeContents($('call-link-box'));
-      getSelection().removeAllRanges();
-      getSelection().addRange(r);
-    }
-  });
-
-  $('btn-call-qr')?.addEventListener('click', () => { if (anruf.link) showQR(anruf.link); });
-
-  $('btn-call-again')?.addEventListener('click', () => {
-    anruf = { id:null, key:null, link:null, video:true,
-              istAnrufer:false, autoAnnehmen:false, aktiv:false };
-    history.replaceState(null, '', '/');
-    showScreen('home');
-    setHomeMode && setHomeMode('call');
-    $('mode-call')?.click();
-  });
-}
-
-initAnrufUI();

@@ -45,12 +45,17 @@
           <button type="button" class="mode" id="mode-note" role="tab"
             aria-selected="true" aria-controls="pane-note">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="m3 6 9 7 9-7"/></svg>
-            <span>Einmal-Nachricht</span>
+            <span>Nachricht</span>
           </button>
           <button type="button" class="mode" id="mode-chat" role="tab"
             aria-selected="false" aria-controls="pane-chat">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4V5a2 2 0 0 1 2-2z"/></svg>
             <span>Chat</span>
+          </button>
+          <button type="button" class="mode" id="mode-call" role="tab"
+            aria-selected="false" aria-controls="pane-call">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11 21 3 13 3 3.7c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1z"/></svg>
+            <span>Anruf</span>
           </button>
         </div>
       </div></div>
@@ -125,6 +130,36 @@
               <span class="cta-face">Sichere Nachricht erstellen</span>
               <svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg>
             </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modus: Einmal-Anruf ─────────────────────────────────────────── -->
+    <div id="pane-call" class="pane" role="tabpanel" aria-labelledby="mode-call">
+      <div class="hud strip"><div class="hud-in">Kein Login &#183; Direkt von Ger&#228;t zu Ger&#228;t &#183; Einmal verwendbar</div></div>
+      <div class="hud panel">
+        <span class="corner corner-tr"></span>
+        <span class="corner corner-bl"></span>
+        <div class="hud-in">
+          <div class="field">
+            <div class="field-head">
+              <span class="chip-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11 21 3 13 3 3.7c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1z"/></svg></span>
+              <span class="f-label">Dein Name</span> <span class="f-opt">(optional)</span>
+            </div>
+            <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+              <input class="inp" id="call-name" type="text" maxlength="40" placeholder="z. B. Max Mustermann" autocomplete="off">
+            </div></div>
+          </div>
+          <div class="rule"></div>
+          <div class="opt-row">
+            <span class="opt-name">Mit Bild</span>
+            <label class="sw"><input type="checkbox" id="call-video" checked aria-label="Videoanruf">
+              <span class="body"></span><span class="knob"></span></label>
+          </div>
+          <p class="summary" id="call-summary">G&#252;ltig 30 Minuten. Stirbt, sobald das Gespr&#228;ch beginnt.</p>
+          <button class="cta" id="btn-call-create" type="button">
+            <span class="cta-in"><svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true"><circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/><circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/><circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/><path d="M20.5 22.5c0-1 .8-2 1.9-2h3.2c.9 0 1.7.6 1.9 1.5l.7 3c.2.9-.2 1.8-1 2.2l-1.6.9c1 2.2 2.8 4 5 5l.9-1.6c.4-.8 1.3-1.2 2.2-1l3 .7c.9.2 1.5 1 1.5 1.9v3.2c0 1.1-1 1.9-2 1.9C28 38.2 20.5 30.7 20.5 22.5z" fill="currentColor"/></svg><span class="cta-face">Sicheren Anruf erstellen</span><svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg></span>
           </button>
         </div>
       </div>
@@ -737,6 +772,159 @@
       </div>
     </div>
 
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
+  </div>
+
+  <!-- EINMAL-ANRUF: LINK VERSCHICKEN -->
+  <div id="screen-call-done" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Anruf-Link verschicken</div>
+      </div>
+    </div>
+    <div class="hud strip"><div class="hud-in" id="call-done-info">&#8203;</div></div>
+    <div class="hud panel">
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <div class="hud-in">
+        <div class="field">
+          <div class="field-head">
+            <span class="chip-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M9.8 14.2 14.2 9.8"/><path d="m11.4 7.6 1.9-1.9a3.9 3.9 0 0 1 5.5 5.5l-1.9 1.9"/><path d="m12.6 16.4-1.9 1.9a3.9 3.9 0 0 1-5.5-5.5l1.9-1.9"/></svg></span>
+            <span class="f-label">Dein Anruf-Link</span>
+          </div>
+          <div class="hud inbox"><div class="hud-in" style="flex-direction:column!important">
+            <div class="link-box" id="call-link-box" tabindex="0" role="textbox" aria-readonly="true" aria-label="Anruf-Link"></div>
+          </div></div>
+          <p class="key-hint"><span class="key-swatch"></span>Dieser Teil ist der Schl&#252;ssel. Er steht nur im Link &#8212; nie auf dem Server.</p>
+        </div>
+        <button class="cta" id="btn-call-copy" type="button">
+          <span class="cta-in"><svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true"><circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/><circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/><circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/><rect x="22" y="20.5" width="12.5" height="15" rx="1.6" stroke="currentColor" stroke-width="2.2" fill="none"/><path d="M25.5 20.5v-1.6a2.5 2.5 0 0 1 5 0v1.6" stroke="currentColor" stroke-width="2.2" fill="none"/><path class="haken" d="m24.4 28.4 2.6 2.6 5-5.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span class="cta-face">Link kopieren</span><svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg></span>
+        </button>
+        <div class="rule"></div>
+        <div class="share-row">
+          <a id="call-share-wa" class="share-btn" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+          <a id="call-share-tg" class="share-btn" target="_blank" rel="noopener noreferrer">Telegram</a>
+          <button id="btn-call-qr" class="share-btn" type="button">QR-Code</button>
+        </div>
+        <p class="summary vorher">Schreib ihm am besten kurz vorher, dass gleich ein Anruf kommt &#8212; sonst wartest du hier ins Leere.</p>
+      </div>
+    </div>
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head"><span class="sec-title">Wartet auf Annahme</span><span class="puls"></span></div>
+        <div class="hinweis">
+          <p>Sobald der andere annimmt, beginnt das Gespr&#228;ch von selbst.</p>
+          <p id="call-wait-rest">Noch niemand da.</p>
+        </div>
+      </div>
+    </div>
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
+  </div>
+
+  <!-- EINMAL-ANRUF: EINGEHEND -->
+  <div id="screen-call-in" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Einmal-Anruf</div>
+      </div>
+    </div>
+    <div class="hud strip"><div class="hud-in">Einmal verwendbar &#183; Direkt von Ger&#228;t zu Ger&#228;t</div></div>
+    <div class="hud panel">
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <div class="hud-in">
+        <div class="field">
+          <div class="field-head">
+            <span class="chip-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11 21 3 13 3 3.7c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1z"/></svg></span>
+            <span class="f-label" id="call-in-title">Du wirst angerufen</span>
+          </div>
+          <p class="lead" id="call-in-lead">Das Gespr&#228;ch l&#228;uft <strong>direkt</strong> zwischen euren Ger&#228;ten. Der Link gilt nur f&#252;r dieses eine Gespr&#228;ch.</p>
+        </div>
+        <div class="klingel" aria-hidden="true">
+          <span class="welle"></span><span class="welle w2"></span>
+          <span class="hoerer"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11 21 3 13 3 3.7c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1z"/></svg></span>
+        </div>
+        <div class="note-error" id="call-in-error" role="alert" hidden></div>
+        <button class="cta" id="btn-call-accept" type="button">
+          <span class="cta-in"><svg class="emblem" viewBox="0 0 56 56" fill="none" aria-hidden="true"><circle class="ring" cx="28" cy="28" r="25" stroke="currentColor" stroke-width="1.6" stroke-dasharray="9 6" opacity=".55"/><circle class="ring ring-2" cx="28" cy="28" r="19" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 5" opacity=".75"/><circle cx="28" cy="28" r="14" fill="currentColor" opacity=".14"/><path d="M20.5 22.5c0-1 .8-2 1.9-2h3.2c.9 0 1.7.6 1.9 1.5l.7 3c.2.9-.2 1.8-1 2.2l-1.6.9c1 2.2 2.8 4 5 5l.9-1.6c.4-.8 1.3-1.2 2.2-1l3 .7c.9.2 1.5 1 1.5 1.9v3.2c0 1.1-1 1.9-2 1.9C28 38.2 20.5 30.7 20.5 22.5z" fill="currentColor"/></svg><span class="cta-face">Anruf annehmen</span><svg class="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></svg></span>
+        </button>
+        <button id="btn-call-reject" class="ghost-wide" type="button" style="margin-top:.5rem">Ablehnen</button>
+      </div>
+    </div>
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head"><span class="sec-title">Was passiert</span></div>
+        <ol class="schritte">
+          <li>Dein Browser fragt nach dem <b>Mikrofon</b></li>
+          <li>Die Verbindung wird <b>direkt</b> aufgebaut</li>
+          <li>Der Link ist danach <b>verbraucht</b></li>
+        </ol>
+      </div>
+    </div>
+    <div class="hud strip foot-strip"><div class="hud-in">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21l-1.8 2.4M17 12v2.6"/></svg><b>E2E</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><b>Auto-Delete</b></span>
+      <span class="sep">·</span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg><b>Kein Account</b></span>
+    </div></div>
+  </div>
+
+  <!-- EINMAL-ANRUF: VORBEI -->
+  <div id="screen-call-over" class="screen">
+    <div class="logo-wrap">
+      <div class="logo-icon"></div>
+      <div>
+        <h1><span class="glitch" data-text="ephemera">ephemera</span></h1>
+        <div class="sub">Einmal-Anruf</div>
+      </div>
+    </div>
+    <div class="hud panel gone-panel">
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <div class="hud-in">
+        <div class="gone-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11 21 3 13 3 3.7c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1z"/><path d="m4 3 16 18"/></svg>
+        </div>
+        <div class="gone-title" id="call-over-title">Gespr&#228;ch beendet</div>
+        <p class="lead" id="call-over-info">Der Link ist verbraucht und l&#228;sst sich kein zweites Mal &#246;ffnen.</p>
+        <button id="btn-call-again" class="ghost-wide" type="button">Neuen Anruf erstellen</button>
+      </div>
+    </div>
+    <div class="hud sec">
+      <span class="tick tick-tl"></span>
+      <div class="hud-in">
+        <div class="sec-head"><span class="sec-title">Was blieb</span></div>
+        <div class="hinweis">
+          <p>Nichts. Kein Mitschnitt, kein Protokoll, keine Nummer.</p>
+          <p>Das Gespr&#228;ch lief direkt zwischen den Ger&#228;ten.</p>
+        </div>
+      </div>
+    </div>
     <div class="hud strip foot-strip"><div class="hud-in">
       <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><b>AES-256</b></span>
       <span class="sep">·</span>

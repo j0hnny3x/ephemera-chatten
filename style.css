@@ -2591,3 +2591,15 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
   #pane-note.on .field:first-child .inbox,
   #pane-note.on .field:first-child .inbox > .hud-in{flex:1 0 auto;min-height:110px}
 }
+
+/* ── Handy: Bereiche untereinander statt übereinander (17.11.2026) ───────
+   Das Raster gab dem Nachrichtenbereich nur den Rest der Bildschirmhöhe
+   (minmax(0,1fr)). Bei offener Tastatur lief sein Inhalt (Frist, Passwort,
+   Senden) unter das Sicherheits-Pult und war verdeckt. Als Spalte wächst der
+   Bereich mit seinem Inhalt, das Pult rutscht darunter, die Seite scrollt.
+   Bei voller Höhe füllt der Nachrichtenbereich wie bisher den Rest. */
+@media (max-width:899px){
+  #screen-home{display:flex !important;flex-direction:column}
+  #screen-home > *{flex:0 0 auto}
+  #screen-home > .pane.on{flex:1 0 auto}
+}

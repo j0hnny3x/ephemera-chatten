@@ -1749,6 +1749,22 @@ async function createNote() {
   btn.classList.remove('done', 'fehler');
   btn.classList.add('busy');
 
+  // iOS/Safari kopiert nur innerhalb des Klicks. Bis der Link fertig ist,
+  // vergehen aber Schluessel, Verschluesselung, Server und Animation (~2 s) —
+  // danach lehnt Safari writeText ab. Deshalb wird die Zwischenablage jetzt,
+  // noch im Klick, mit einem Versprechen belegt und erst spaeter gefuellt.
+  let linkFertig = null, linkAbbruch = null;
+  noteData.kopiertImKlick = false;
+  if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+    const linkText = new Promise((ok, nein) => { linkFertig = ok; linkAbbruch = nein; });
+    try {
+      navigator.clipboard.write([new ClipboardItem({
+        'text/plain': linkText.then(t => new Blob([t], { type: 'text/plain' })),
+      })]).then(() => noteCopyFace('Link kopiert', true)).catch(() => {});
+      noteData.kopiertImKlick = true;
+    } catch (_) { linkFertig = linkAbbruch = null; }
+  }
+
   try {
     stufe('Schlüssel wird erzeugt');
     const { key, b64url } = await mitMindestdauer(generateKey(), halt);
@@ -1783,7 +1799,9 @@ async function createNote() {
     window.secLog && window.secLog('Nachricht hinterlegt', String(data.noteId).slice(0, 8) + '…');
     if (!ruhig) await new Promise(r => setTimeout(r, 560));
 
-    showNoteDone(location.origin + '/n/' + data.noteId + '#' + b64url, data);
+    const fertigerLink = location.origin + '/n/' + data.noteId + '#' + b64url;
+    showNoteDone(fertigerLink, data);
+    linkFertig && linkFertig(fertigerLink);
 
     // Klartext nicht im Formular stehen lassen
     $('note-text').value = '';
@@ -1794,6 +1812,7 @@ async function createNote() {
   } catch (e) {
     // Kein nativer Dialog — der passt weder zur Gestaltung noch zum Ablauf.
     // Der kurze Hinweis steht im Knopf, der volle Grund in der Sicherheitslage.
+    linkAbbruch && linkAbbruch(new Error('abgebrochen'));
     const grund = (e && e.message) || 'Die Nachricht konnte nicht erstellt werden.';
     window.secLog && window.secLog('Fehlgeschlagen', grund);
     btn.classList.remove('busy', 'done');
@@ -1834,7 +1853,9 @@ function showNoteDone(link, data) {
   noteCopyFace('Link kopieren', false);
   showScreen('noteDone');
 
-  // Direkt in die Zwischenablage — der haeufigste naechste Schritt
+  // Direkt in die Zwischenablage — der haeufigste naechste Schritt.
+  // Wurde sie schon im Klick belegt (siehe createNote), nicht doppelt.
+  if (noteData.kopiertImKlick) return;
   navigator.clipboard && navigator.clipboard.writeText(link)
     .then(() => noteCopyFace('Link kopiert', true))
     .catch(() => {});

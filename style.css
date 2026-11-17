@@ -2599,7 +2599,13 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
    Bereich mit seinem Inhalt, das Pult rutscht darunter, die Seite scrollt.
    Bei voller Höhe füllt der Nachrichtenbereich wie bisher den Rest. */
 @media (max-width:899px){
-  #screen-home{display:flex !important;flex-direction:column}
+  /* Nur wenn aktiv: eine display-Regel an der ID ließ sonst die Startseite
+     über dem Link-Bildschirm stehen (siehe Hinweise weiter oben). */
+  #screen-home.active{display:flex;flex-direction:column}
+  #screen-home:not(.active){display:none !important}
   #screen-home > *{flex:0 0 auto}
   #screen-home > .pane.on{flex:1 0 auto}
+  /* Im Raster lagen beide Bereiche im selben Feld; als Spalte bräuchte der
+     inaktive sonst eigenen Platz und risse eine Lücke. */
+  #screen-home > .pane:not(.on){display:none !important}
 }

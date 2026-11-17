@@ -2579,3 +2579,15 @@ h1{font-family:var(--disp);font-weight:700;letter-spacing:.03em;color:var(--acid
 @media (max-width: 899px) {
   #pane-chat.on .panel{flex:1 1 auto}
 }
+
+/* ── Textfeld darf nicht zusammenfallen (17.11.2026) ────────────────────
+   Bei offener Handy-Tastatur wird die Höhe klein; das Feld „Deine Nachricht“
+   schrumpfte auf 0 px, das Textfeld lag dann unter der Fristzeile und man sah
+   die getippten Zeichen nicht. Jetzt behält es seine Höhe, die Seite scrollt. */
+@media (max-width:899px){
+  #pane-note.on .panel{flex:1 0 auto}
+  #pane-note.on .panel > .hud-in{flex:1 0 auto}
+  #pane-note.on .field:first-child{flex:1 0 auto;min-height:118px}
+  #pane-note.on .field:first-child .inbox,
+  #pane-note.on .field:first-child .inbox > .hud-in{flex:1 0 auto;min-height:110px}
+}
